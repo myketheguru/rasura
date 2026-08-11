@@ -50,9 +50,7 @@ fn page(blocks: &[(&str, f64, &str, f64)]) -> Vec<u8> {
         y -= gap;
         for line in wrap(text, *size) {
             let escaped = line.replace('\\', r"\\").replace('(', r"\(").replace(')', r"\)");
-            out.push_str(&format!(
-                "BT /{font} {size} Tf 1 0 0 1 72 {y:.1} Tm ({escaped}) Tj ET\n"
-            ));
+            out.push_str(&format!("BT /{font} {size} Tf 1 0 0 1 72 {y:.1} Tm ({escaped}) Tj ET\n"));
             y -= size * 1.35;
         }
     }
@@ -62,26 +60,37 @@ fn page(blocks: &[(&str, f64, &str, f64)]) -> Vec<u8> {
 fn main() {
     let one = page(&[
         ("Quarterly Report", 18.0, "FB", 0.0),
-        ("Prepared for the board, and for anyone curious about what a PDF editor can see.", 9.0, "FI", 8.0),
+        (
+            "Prepared for the board, and for anyone curious about what a PDF editor can see.",
+            9.0,
+            "FI",
+            8.0,
+        ),
         ("Summary", 13.0, "FB", 22.0),
         (
             "Revenue rose by eleven per cent over the period, driven chiefly by the \
              subscription business, which grew faster than the board had forecast at the \
              start of the year. The hardware line was flat. Costs rose in line with \
              headcount, and the margin held.",
-            10.0, "F1", 8.0,
+            10.0,
+            "F1",
+            8.0,
         ),
         (
             "This paragraph exists so that line breaking is visible. Its last line is \
              short, which is exactly why a single page cannot tell you where the measure \
              is — twenty pages of the same column can.",
-            10.0, "F1", 10.0,
+            10.0,
+            "F1",
+            10.0,
         ),
         ("Method", 13.0, "FB", 20.0),
         (
             "Figures are unaudited. Where a number is stated to two places it was \
              computed to more and rounded once, at the end, rather than at every step.",
-            10.0, "F1", 8.0,
+            10.0,
+            "F1",
+            8.0,
         ),
     ]);
 
@@ -92,13 +101,17 @@ fn main() {
              says that this paragraph follows that one, or that either belongs to the \
              section above them. That structure was consumed when the document was \
              written, and everything the editor shows you about it was reconstructed.",
-            10.0, "F1", 12.0,
+            10.0,
+            "F1",
+            12.0,
         ),
         (
             "The editor draws from that reconstruction rather than from a rendering \
              engine, which is why the page looks approximately rather than exactly like \
              a viewer would show it. What you are looking at is what the library knows.",
-            10.0, "F1", 10.0,
+            10.0,
+            "F1",
+            10.0,
         ),
         ("Contact", 13.0, "FB", 20.0),
         ("Questions to the desk of A. Ozdamar, who does not exist.", 10.0, "F1", 8.0),

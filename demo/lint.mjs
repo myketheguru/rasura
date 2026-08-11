@@ -11,11 +11,20 @@
 // It does not check the canvas, the layout, or whether anything looks right.
 // That gap is real and is stated in demo/README.md rather than implied away.
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 const app = readFileSync('demo/app.mjs', 'utf8');
 const html = readFileSync('demo/index.html', 'utf8');
-const glue = readFileSync('demo/dist/rasura_wasm.js', 'utf8');
+// Wherever the module build left it. Not demo/dist: the workflow lints before
+// it assembles, and reading the assembled copy made this pass locally and fail
+// on a clean checkout -- which is the exact failure a lint is supposed to
+// prevent rather than produce.
+const gluePath = ['target/pkg/web/rasura_wasm.js', 'js/wasm/rasura_wasm.js', 'demo/dist/rasura_wasm.js'].find(existsSync);
+if (!gluePath) {
+  console.error('no rasura_wasm.js found -- run crates/rasura-wasm/build.sh first');
+  process.exit(1);
+}
+const glue = readFileSync(gluePath, 'utf8');
 const render = readFileSync('demo/render.mjs', 'utf8');
 
 let failures = 0;

@@ -33,9 +33,14 @@ else
     git clone --filter=blob:none --sparse --depth 1 --quiet \
         https://github.com/mozilla/pdf.js "$pdfjs"
     # src/core is fetched too: its metrics.js is the source for the standard-14
-  # AFM widths that spec 8.2 requires, and encodings.js for the Symbol and
-  # ZapfDingbats built-in encodings. Apache-2.0, like the rest.
-  git -C "$pdfjs" sparse-checkout set test/pdfs src/core LICENSE
+    # AFM widths that spec 8.2 requires, and encodings.js for the Symbol and
+    # ZapfDingbats built-in encodings. Apache-2.0, like the rest.
+    #
+    # --no-cone because LICENSE is a file, and cone mode takes directory
+    # prefixes only: it fails with "fatal: 'LICENSE' is not a directory". The
+    # licence is fetched deliberately — the corpus is Apache-2.0 and its terms
+    # should travel with the files they cover.
+    git -C "$pdfjs" sparse-checkout set --no-cone test/pdfs src/core LICENSE
 fi
 echo "pdf.js: $(find "$pdfjs/test/pdfs" -name '*.pdf' | wc -l) files"
 
