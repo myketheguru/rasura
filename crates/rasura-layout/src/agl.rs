@@ -49,11 +49,11 @@ pub fn lookup(name: &str) -> Option<String> {
         let parts: Vec<&str> = name.split('_').filter(|p| !p.is_empty()).collect();
         if parts.len() > 1 {
             let mut out = String::new();
+            // All or nothing: a ligature name whose components do not all
+            // resolve is not a ligature this table knows, and half of one is
+            // worse than none.
             for part in &parts {
-                match lookup_without_suffix(part) {
-                    Some(t) => out.push_str(&t),
-                    None => return None,
-                }
+                out.push_str(&lookup_without_suffix(part)?);
             }
             if !out.is_empty() {
                 return Some(out);

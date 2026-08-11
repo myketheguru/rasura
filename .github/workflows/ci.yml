@@ -203,6 +203,13 @@ jobs:
       - name: Build and drive the shipped module
         run: ./crates/rasura-wasm/build.sh
 
+      # The step below ends in a pixel diff, and a pixel diff needs a renderer.
+      # This job did not fetch one, so that step had never actually run: it died
+      # on a missing libpdfium.so every time, in the one place a "the glyph
+      # draws" check is the whole point. Test-only, never shipped (spec 4.2).
+      - name: Fetch the pdfium reference renderer
+        run: ./harness/pixeldiff/fetch.sh
+
       # Spec 11.3's answer to "the browser cannot see system fonts": a document
       # embedding a two-letter subset, a character it threw away, and a caller
       # who supplied the typeface. Also writes the fixture the package's own
