@@ -239,7 +239,7 @@ fn main() -> std::process::ExitCode {
         println!("kept:    the untouched line survives verbatim");
     } else if rasura_content::page::pages(&doc)
         .ok()
-        .and_then(|p| Document::open(saved.bytes.clone()).ok().map(|d| (d, p)))
+        .zip(Document::open(saved.bytes.clone()).ok())
         .is_some()
     {
         // Compressed output puts it beyond a raw scan; the reopen below is the

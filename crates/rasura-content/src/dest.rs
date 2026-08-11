@@ -544,8 +544,13 @@ mod tests {
     #[test]
     fn explicit_destinations_resolve_to_a_page_index() {
         let (_doc, nav) = nav_of(navigated());
+        // Object 6 is the second page in the fixture, so anything pointing at
+        // it must have resolved to index 1. The others are only required to
+        // have resolved at all, which is the assertion below.
         for d in &nav.destinations {
-            assert_eq!(d.page, Some(1).filter(|_| d.target == Some(ObjId::new(6, 0))).or(d.page));
+            if d.target == Some(ObjId::new(6, 0)) {
+                assert_eq!(d.page, Some(1), "{d:?}");
+            }
         }
         assert!(nav.destinations.iter().all(|d| d.page.is_some()), "{:?}", nav.destinations);
         assert_eq!(nav.dangling().count(), 0);
