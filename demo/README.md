@@ -1,5 +1,7 @@
 # Rasura Studio
 
+**Live: https://myketheguru.github.io/rasura/**
+
 A demonstration editor for [Rasura](../README.md), built to the specification in
 [docs/demo-editor.md](../docs/demo-editor.md). Static files, no server, no
 network. It is the shortest honest answer to "what does this library actually

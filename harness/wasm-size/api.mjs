@@ -45,6 +45,10 @@ const check = (label, condition, detail = "") => {
 // paragraphs, so using it would run every check here and quietly skip the one
 // that matters.
 const candidates = [
+  // First, because it is the only one the repository actually carries: the
+  // corpus seeds are generated and gitignored, and corpus/external is other
+  // people's files. A checkout with nothing else in it still runs this check.
+  "demo/sample.pdf",
   "corpus/files/classic-flate-content.pdf",
   "target/textedit/before.pdf",
   "target/protect/plain.pdf",

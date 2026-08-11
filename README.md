@@ -89,8 +89,10 @@ download(saved.bytes);
 await doc.close();
 ```
 
-A demonstration editor is in [demo/](demo/) — static files, no server, deployed
-to GitHub Pages by [.github/workflows/pages.yml](.github/workflows/pages.yml).
+**[Try the demonstration editor →](https://myketheguru.github.io/rasura/)**
+Static files, no server, no network: the document never leaves your machine.
+Source in [demo/](demo/), deployed by
+[.github/workflows/pages.yml](.github/workflows/pages.yml).
 Its specification — architecture,
 feature set, and a ten-minute script — is in
 [docs/demo-editor.md](docs/demo-editor.md).
