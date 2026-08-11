@@ -1,0 +1,80 @@
+# Deploy Rasura Studio to GitHub Pages.
+#
+# The demo is static files: an ES module, a stylesheet, the WASM module and a
+# sample document. There is no server, no bundler and no build step beyond
+# compiling the module — which is the point being demonstrated, so the workflow
+# is deliberately the shortest one that can be correct.
+#
+# Note what is *absent*: no COOP/COEP headers, because Pages cannot set them and
+# the single-threaded build (§12.1) does not need them. A threaded build would
+# require cross-origin isolation and could not be hosted here at all.
+
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'demo/**'
+      - 'crates/rasura-wasm/**'
+      - 'crates/rasura*/src/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a queued run supersedes a pending one but never
+# cancels a run already publishing.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install the WASM toolchain
+        run: |
+          cargo install wasm-bindgen-cli --locked
+          npm i -g wasm-opt
+
+      # The same script CI uses, so the module on the demo is the module the
+      # size budget and the node harness were run against.
+      - name: Build the module
+        run: ./crates/rasura-wasm/build.sh
+
+      # Neither of these needs a browser, and between them they cover the two
+      # failures that would break the page on load: a missing element id and an
+      # import the glue does not export.
+      - name: Check the demo
+        run: |
+          node demo/lint.mjs
+          node demo/test.mjs
+
+      - name: Assemble
+        run: node demo/build.mjs
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: demo/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

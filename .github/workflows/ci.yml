@@ -1,0 +1,558 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  check:
+    name: fmt, clippy, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Formatting
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # The font-injection tests decline rather than fail when the real
+      # typeface is absent, so that a clone without it still runs green
+      # locally. That courtesy would be a hole in the gate if CI inherited it,
+      # so CI fetches the font and the tests run for real.
+      - name: Fetch a real typeface
+        run: bash ./corpus/fetch-font.sh
+
+      - name: Tests
+        run: cargo test --workspace
+
+  licences:
+    # Spec 4.3: every runtime dependency must be MIT, Apache-2.0, BSD, ISC or
+    # Zlib. This is a hard build gate, not a guideline.
+    name: licence gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+
+  invariants:
+    # Spec 17: each phase ends with the invariant suite green on the corpus.
+    # Phase 1 does not exit with I1 failures.
+    name: invariant suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # The external corpora are not committed -- they are other people's files
+      # under other people's licences. Cache the fetch so CI is not cloning
+      # 119 MB on every run.
+      - name: Cache external corpora
+        id: corpus-cache
+        uses: actions/cache@v4
+        with:
+          path: corpus/external
+          key: corpus-pdfjs-v1
+      - name: Fetch external corpora
+        if: steps.corpus-cache.outputs.cache-hit != 'true'
+        run: ./corpus/fetch.sh
+
+      - run: cargo run --release -p rasura-invariants
+
+  content-walk:
+    # Every page of every corpus file through the content layer, asserting the
+    # span and attribution invariants that spec 6.2 makes load-bearing. Two
+    # million operators is a better test of the tokenizer than any fixture.
+    name: content layer walk
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Cache external corpora
+        id: corpus-cache
+        uses: actions/cache@v4
+        with:
+          path: corpus/external
+          key: corpus-pdfjs-v1
+      - name: Fetch external corpora
+        if: steps.corpus-cache.outputs.cache-hit != 'true'
+        run: ./corpus/fetch.sh
+      - run: cargo run --release -p rasura-contentwalk
+
+  text-diff:
+    # Spec 17, Phase 2's exit criterion: "text extraction with correct positions
+    # across the corpus". pdf.js is the oracle -- two decades of work against
+    # the same files.
+    name: text extraction vs pdf.js
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Cache external corpora
+        id: corpus-cache
+        uses: actions/cache@v4
+        with:
+          path: corpus/external
+          key: corpus-pdfjs-v1
+      - name: Fetch external corpora
+        if: steps.corpus-cache.outputs.cache-hit != 'true'
+        run: ./corpus/fetch.sh
+      - name: Install the reference extractor
+        run: npm install
+        working-directory: harness/textdiff
+      - name: Extract with pdf.js
+        run: node harness/textdiff/extract-pdfjs.mjs corpus/external/pdfjs/test/pdfs corpus/pdfjs-text.jsonl 3
+      # Also exercises the whole of §7 -- the derivation chain, line assembly,
+      # word segmentation, region detection, paragraphs, tables, footnotes,
+      # running elements and the §7.8 document model -- over every page. Four
+      # partitions are asserted: region detection must not drop a glyph,
+      # paragraph splitting must not drop a line, cell assignment must not drop
+      # a glyph, and the model must not drop a region's glyphs or list a block
+      # twice. It also scores reading order against /StructTreeRoot on the
+      # corpus's tagged documents, which is the only oracle for ordering that
+      # exists -- pdf.js is content-ordered and cannot serve as one.
+      - name: Compare
+        run: cargo run --release -p rasura-textdiff -- corpus/pdfjs-text.jsonl
+
+  font-survey:
+    # Spec 18 Q1 is not a one-off measurement: /ToUnicode coverage is the number
+    # that decides how much of 7.2's fallback chain has to exist, and it moves
+    # as the corpus grows. Re-measured on every run so a corpus addition that
+    # changes the answer is visible rather than assumed away.
+    name: /ToUnicode survey
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Cache external corpora
+        id: corpus-cache
+        uses: actions/cache@v4
+        with:
+          path: corpus/external
+          key: corpus-pdfjs-v1
+      - name: Fetch external corpora
+        if: steps.corpus-cache.outputs.cache-hit != 'true'
+        run: ./corpus/fetch.sh
+      # Also reports spec 8.2 parse coverage: how many of the corpus's embedded
+      # font programs can be read at all. Nothing in Phase 4 above parsing can
+      # be built on a font that will not open, so this is the number that says
+      # how much of the phase is reachable.
+      - run: cargo run --release -p rasura-fontsurvey -- --csv fontsurvey.csv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fontsurvey
+          path: fontsurvey.csv
+
+  bundle-size:
+    # Spec 12.3: enforce budgets in CI with a size-limit gate that fails the
+    # build on regression. Also the only job that proves the library still
+    # compiles for, and runs on, wasm32.
+    name: wasm bundle size
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm i -g wasm-opt
+
+      # The four size probes: cos alone, and the whole `core` chunk. They
+      # measure the *floor* — what the layers cost with no API on top — which is
+      # what catches a regression in a layer rather than in the surface.
+      - run: ./harness/wasm-size/build.sh
+
+      # And the artefact that actually ships, which is the number the budget is
+      # about. Separate because a probe cannot be run: it exports nothing.
+      - run: cargo install wasm-bindgen-cli --locked
+      - name: Build and drive the shipped module
+        run: ./crates/rasura-wasm/build.sh
+
+      # Spec 11.3's answer to "the browser cannot see system fonts": a document
+      # embedding a two-letter subset, a character it threw away, and a caller
+      # who supplied the typeface. Also writes the fixture the package's own
+      # suite uses — generated rather than committed, since it is derived from a
+      # font the repository does not carry.
+      - name: Supply a font, and check the glyph draws
+        run: |
+          set -eu
+          bash ./corpus/fetch-font.sh
+          cargo run --release -p rasura --example registerfont -- target/registerfont
+          # `--unchanged-before`, not `--identical`: the first letter is
+          # deliberately different, and É is wider than H so everything after it
+          # shifts. What has to hold is that nothing upstream of the edit moved.
+          cargo run --release -p rasura-pixeldiff -- \
+            target/registerfont/before.pdf target/registerfont/after.pdf \
+            --unchanged-before 150 --artefacts target/registerfont/diff
+
+      # The npm package on top of it. Spec 12.4 asks for hand-written
+      # declarations with no `any`; `npm test` runs `tsc --noEmit` over a file
+      # of deliberate mistakes, so a return type widening to `any` fails the
+      # build rather than passing silently.
+      - name: The npm package
+        run: |
+          npm install
+          npm test
+        working-directory: js
+
+      # Spec 12.4: "No postinstall scripts. No native build step. `npm i
+      # rasura` and it works." Checked by doing it — packing the tarball,
+      # installing it into an empty directory, and using it. Everything before
+      # this point tests the working tree; only this tests the thing a user
+      # actually receives.
+      - name: npm i rasura, and it works
+        run: |
+          set -eu
+          node -e "const p=require('./js/package.json');
+            if (p.scripts?.postinstall || p.scripts?.install || p.scripts?.preinstall) {
+              console.error('package.json has an install script; spec 12.4 forbids it');
+              process.exit(1);
+            }"
+          npm pack --pack-destination "$RUNNER_TEMP" --prefix js
+          mkdir -p "$RUNNER_TEMP/consumer"
+          cd "$RUNNER_TEMP/consumer"
+          echo '{"name":"consumer","type":"module","private":true}' > package.json
+          # --ignore-scripts proves the package needs none, rather than trusting
+          # that it declared none.
+          npm install --ignore-scripts "$RUNNER_TEMP"/rasura-*.tgz
+          cp "$GITHUB_WORKSPACE/corpus/files/classic-flate-content.pdf" sample.pdf
+          cp "$GITHUB_WORKSPACE/js/test/consumer.mjs" .
+          node consumer.mjs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm
+          path: target/pkg/web/
+
+  external-validators:
+    # Spec 14.2 I3: qpdf and veraPDF are the authorities on validity. The
+    # library's own structural checks run everywhere; these run where the tools
+    # are available.
+    #
+    # The seed corpus includes `injected-truetype.pdf`, which is spec 8.4's
+    # whole pipeline written out as a document: a font program with a glyph
+    # injected, with /Widths, /Differences and /ToUnicode updated to match.
+    # Phase 4's exit criterion is that injection "round-trips validate", and
+    # this is the part of it an external tool can judge.
+    name: qpdf --check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install qpdf
+        run: sudo apt-get update && sudo apt-get install -y qpdf
+      - name: Generate the seed corpus
+        run: cargo run -p rasura-invariants -- --write-seed target/corpus
+      - name: Install the reference reader
+        run: npm install
+        working-directory: harness/textdiff
+      # A second, independent opinion on the injected font. pdf.js building the
+      # page's operator list forces it to parse the embedded program and
+      # translate every glyph -- text extraction alone would pass straight from
+      # /ToUnicode without the program being read at all.
+      - name: pdf.js reads the injected font
+        run: node harness/textdiff/validate-injected.mjs target/corpus/injected-truetype.pdf
+
+      # Spec 14.3, and the check no structural test can make. qpdf says the file
+      # is well formed and pdf.js says the text comes back; neither says the
+      # page still looks the same. This renders before and after with pdfium and
+      # requires that nothing changed where the old content was.
+      #
+      # It earned its place immediately: the injected glyph was reachable by
+      # every structural measure and drew nothing, because a TrueType font
+      # resolves a /Differences name through its own cmap and the injection had
+      # not extended it. Only rendering showed that.
+      - name: Fetch the pdfium reference renderer
+        run: ./harness/pixeldiff/fetch.sh
+      - name: Pixel diff, before against after
+        run: |
+          cargo run --release -p rasura-pixeldiff -- \
+            target/corpus/injected-truetype-before.pdf \
+            target/corpus/injected-truetype.pdf \
+            --artefacts target/pixeldiff
+      # The same pipeline against a typeface this library did not write.
+      #
+      # The fixture font is synthesised by the crate that reads it, so it agrees
+      # with every assumption this code makes about a well-formed sfnt. Roboto
+      # does not: 3,387 glyphs, 2048 units per em, hinting programs, a `post`
+      # table, `GSUB`, several `cmap` subtables — and an É that is a *composite*,
+      # so injecting it is only correct if the components come with it and their
+      # glyph ids are renumbered inside the composite's body. Nothing in the
+      # synthesised fixture exercises that.
+      - name: Fetch a real typeface
+        run: bash ./corpus/fetch-font.sh
+      - name: Inject into it
+        run: |
+          cargo run --release -p rasura-font --example realfont -- \
+            corpus/fonts/Roboto-Regular.ttf target/realfont
+      - name: pdf.js reads the real font
+        run: node harness/textdiff/validate-injected.mjs target/realfont/after.pdf "HamburgÉ"
+      - name: Pixel diff the real font, before against after
+        run: |
+          cargo run --release -p rasura-pixeldiff -- \
+            target/realfont/before.pdf target/realfont/after.pdf \
+            --artefacts target/realfont/diff
+      # Spec 14.2 I2, the pixel half, which has been "needs the render harness"
+      # since Phase 1. A two-page document, a word replaced on page one:
+      #
+      #   - page 2 must render **pixel-identical**. That is the invariant as
+      #     written, and the only check that catches an edit leaking through
+      #     something the pages share -- a font dictionary rewritten in place, a
+      #     /Resources entry renumbered, an object stream repacked. Each leaves
+      #     the edited page correct and changes a page nobody touched.
+      #   - page 1 must not change *upstream* of the edit. Text after it moves,
+      #     because that is what changing a word's width does.
+      #
+      # The boundary column is computed by the example from the layout layer's
+      # own coordinates, not hard-coded, so the two cannot drift apart.
+      - name: Edit text on page one
+        run: cargo run --release -p rasura-edit --example textedit -- target/textedit
+      - name: The untouched page is pixel-identical
+        run: |
+          cargo run --release -p rasura-pixeldiff -- \
+            target/textedit/before.pdf target/textedit/after.pdf \
+            --page 2 --identical
+      - name: Nothing upstream of the edit moved
+        run: |
+          cargo run --release -p rasura-pixeldiff -- \
+            target/textedit/before.pdf target/textedit/after.pdf \
+            --page 1 --unchanged-before "$(cat target/textedit/edit-column.txt)" \
+            --artefacts target/textedit/diff
+      - name: pdf.js reads the edited text
+        run: |
+          node harness/textdiff/validate-injected.mjs \
+            target/textedit/after.pdf "The first page says WORLD"
+
+      # Phase 6's first block operation. The fixture's image is drawn *rotated*
+      # on purpose: 36% of the corpus's images are, and a move implemented by
+      # rewriting a bounding box would flatten every one of them. The example
+      # asserts the move landed and the rotation survived; pdfium then confirms
+      # the untouched page did not.
+      # Move, scale and delete all go through the same wrap, so the renderer
+      # checks one mechanism from three directions. Each run asserts two things:
+      #
+      #   - page 2, which shares the image XObject, is pixel-identical;
+      #   - page 1 changed only inside the columns the image occupied before or
+      #     after. Neither "nothing changed" nor "nothing before column N" fits
+      #     content that *moved*, which is what --changed-within is for.
+      #
+      # The band is computed by the example from the layout layer's own bounds
+      # rather than hard-coded, so the two cannot drift apart.
+      - name: Move, scale and delete an image
+        run: |
+          set -eu
+          run() {
+            dir="$1"; shift
+            cargo run --release -p rasura-edit --example moveimage -- "$dir" "$@"
+            cargo run --release -p rasura-pixeldiff -- \
+              "$dir/before.pdf" "$dir/after.pdf" --page 2 --identical
+            cargo run --release -p rasura-pixeldiff -- \
+              "$dir/before.pdf" "$dir/after.pdf" \
+              --page 1 --changed-within $(cat "$dir/region.txt") \
+              --artefacts "$dir/diff"
+          }
+          run target/moveimage
+          run target/scaleimage --scale
+          run target/deleteimage --delete
+
+      # A page drawn from nothing, through the draw-command emitter. The
+      # renderer is judging the emitter here rather than the patcher, and the
+      # check that matters is on the *other* page: an insertion has more ways to
+      # disturb its neighbours than an edit does — a stale /Count, a /Kids entry
+      # in the wrong slot, an object number colliding with one already there.
+      - name: Draw and insert a page
+        run: cargo run --release -p rasura-edit --example newpage -- target/newpage
+      - name: The page before the insertion is pixel-identical
+        run: |
+          cargo run --release -p rasura-pixeldiff -- \
+            target/newpage/before.pdf target/newpage/after.pdf \
+            --page 1 --identical
+
+      # Phase 7's redaction, checked by things that share no code with it. The
+      # example plants the word in five places a page does not show and then
+      # refuses to trust its own verifier: it asserts the verifier *fails* on
+      # the input first, because a checker that cannot see the word when it is
+      # plainly there reports clean for the same reason on every file.
+      #
+      # pdfium is asked the question --changed-within exists for. Redaction
+      # removes glyphs from the middle of a line, so neither "nothing changed"
+      # nor "nothing before column N" fits; what has to hold is that only the
+      # word's own pixels changed. That is a real claim rather than a tautology
+      # because the glyphs which stay are pinned with TJ adjustments -- letting
+      # the line close up would move text nobody asked to touch, out from under
+      # the black box the caller is about to draw.
+      - name: Redact a word
+        run: cargo run --release -p rasura-edit --example redact -- target/redact
+      - name: Only the redacted word's pixels changed
+        run: |
+          cargo run --release -p rasura-pixeldiff -- \
+            target/redact/before.pdf target/redact/after.pdf \
+            --changed-within $(cat target/redact/redacted-columns.txt) \
+            --artefacts target/redact/diff
+      # Both directions, because only the pair is evidence: pdf.js must find the
+      # word in the input and fail to find it in the output. Checking only the
+      # output would pass if the check itself were broken.
+      - name: pdf.js finds the word before, and cannot after
+        run: |
+          if node harness/textdiff/validate-injected.mjs \
+               target/redact/before.pdf --absent "Wolfgang"; then
+            echo "::error::the absence check passed on a file that contains the word"
+            exit 1
+          fi
+          node harness/textdiff/validate-injected.mjs \
+            target/redact/after.pdf --absent "Wolfgang"
+
+      # Phase 8's encryption creation. This is the one area where testing
+      # against your own inverse proves nothing: a key derivation that is wrong
+      # in a self-consistent way encrypts and decrypts perfectly and produces a
+      # file nobody else can open. So the check is entirely external -- pdf.js
+      # derives the key from the password, pdfium renders the result, and
+      # neither shares a line of code with us.
+      #
+      # The pixel claim is the sharp one: encryption must change no pixels at
+      # all. Comparing the protected file against the plain original with two
+      # different passwords asserts that pdfium got the same page back.
+      - name: Protect a document
+        run: cargo run --release -p rasura-cos --example protect -- target/protect
+      - name: pdf.js opens it with the password, and not without
+        run: |
+          set -eu
+          for f in aes256 aes128; do
+            node harness/textdiff/validate-injected.mjs \
+              "target/protect/$f.pdf" --password hunter2 "Account balance: 4,200"
+            if node harness/textdiff/validate-injected.mjs \
+                 "target/protect/$f.pdf" "Account balance: 4,200"; then
+              echo "::error::$f.pdf opened without a password"
+              exit 1
+            fi
+          done
+      - name: pdfium renders it identically to the unprotected original
+        run: |
+          set -eu
+          for f in aes256 aes128; do
+            cargo run --release -p rasura-pixeldiff -- \
+              target/protect/plain.pdf "target/protect/$f.pdf" \
+              --password "" --password hunter2 --identical
+          done
+          # And the round trip back out, where a mistake is invisible: dropping
+          # /Encrypt while leaving the streams as ciphertext gives a file that
+          # opens and renders nothing.
+          cargo run --release -p rasura-pixeldiff -- \
+            target/protect/plain.pdf target/protect/unprotected.pdf --identical
+
+      # Phase 8's compaction subsetting. The operation where a mistake is least
+      # visible from inside: renumber a font's glyphs and lose track of which is
+      # which, and the document opens, validates, extracts the right text
+      # through /ToUnicode, and draws the wrong letters.
+      #
+      # So the whole of Roboto goes in, 3,374 of its 3,387 glyphs come out, and
+      # pdfium is asked whether the page changed. `--identical` is the claim:
+      # compaction must change the file's size and not one pixel.
+      - name: Compact a real embedded font
+        run: cargo run --release -p rasura-edit --example compactfont -- target/compactfont
+      - name: The compacted document renders identically
+        run: |
+          cargo run --release -p rasura-pixeldiff -- \
+            target/compactfont/before.pdf target/compactfont/after.pdf \
+            --identical --artefacts target/compactfont/diff
+      - name: pdf.js still reads the text from the pruned font
+        run: |
+          node harness/textdiff/validate-injected.mjs \
+            target/compactfont/after.pdf "Hamburgefons"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pixeldiff
+          path: |
+            target/pixeldiff/
+            target/realfont/diff/
+            target/textedit/diff/
+            target/moveimage/diff/
+            target/scaleimage/diff/
+            target/deleteimage/diff/
+            target/redact/diff/
+            target/compactfont/diff/
+            target/registerfont/diff/
+      - name: Check every generated file
+        run: |
+          status=0
+          for f in target/corpus/*.pdf target/realfont/*.pdf target/textedit/*.pdf \
+                   target/moveimage/*.pdf target/scaleimage/*.pdf \
+                   target/deleteimage/*.pdf target/newpage/*.pdf \
+                   target/redact/*.pdf target/protect/*.pdf \
+                   target/compactfont/*.pdf; do
+            # Adversarial fixtures are deliberately malformed; they are expected
+            # to draw complaints, so only the well-formed ones gate the build.
+            case "$(basename "$f")" in
+              adversarial-*) continue ;;
+              # The protected outputs need their password to be checked at all,
+              # which is itself a third implementation agreeing on the key.
+              aes256.pdf|aes128.pdf) pw="--password=hunter2" ;;
+              *) pw="" ;;
+            esac
+            if ! qpdf $pw --check "$f"; then
+              echo "::error file=$f::qpdf --check failed"
+              status=1
+            fi
+          done
+          exit $status
+
+  fuzz-smoke:
+    # Spec 14.4: the parser must never panic, hang, or allocate unboundedly.
+    # A short run on every PR; the long-running campaign is a separate job.
+    name: fuzz smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-fuzz --locked
+      - name: Generate seeds
+        run: cargo run -p rasura-invariants -- --write-seed fuzz/corpus/document_open
+      - name: Run each target briefly
+        run: |
+          for target in object_lexer document_open filters xref; do
+            cargo +nightly fuzz run "$target" -- -max_total_time=60 -rss_limit_mb=2048
+          done

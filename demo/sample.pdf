@@ -1,0 +1,75 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [6 0 R 8 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique /Encoding /WinAnsiEncoding >>
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R /Resources << /Font << /F1 3 0 R /FB 4 0 R /FI 5 0 R >> >> >>
+endobj
+7 0 obj
+<< /Length 1189 >>
+stream
+BT /FB 18 Tf 1 0 0 1 72 720.0 Tm (Quarterly Report) Tj ET
+BT /FI 9 Tf 1 0 0 1 72 687.7 Tm (Prepared for the board, and for anyone curious about what a PDF editor can see.) Tj ET
+BT /FB 13 Tf 1 0 0 1 72 653.6 Tm (Summary) Tj ET
+BT /F1 10 Tf 1 0 0 1 72 628.0 Tm (Revenue rose by eleven per cent over the period, driven chiefly by the subscription business,) Tj ET
+BT /F1 10 Tf 1 0 0 1 72 614.5 Tm (which grew faster than the board had forecast at the start of the year. The hardware line was) Tj ET
+BT /F1 10 Tf 1 0 0 1 72 601.0 Tm (flat. Costs rose in line with headcount, and the margin held.) Tj ET
+BT /F1 10 Tf 1 0 0 1 72 577.5 Tm (This paragraph exists so that line breaking is visible. Its last line is short, which is) Tj ET
+BT /F1 10 Tf 1 0 0 1 72 564.0 Tm (exactly why a single page cannot tell you where the measure is ‚Äî twenty pages of the same) Tj ET
+BT /F1 10 Tf 1 0 0 1 72 550.5 Tm (column can.) Tj ET
+BT /FB 13 Tf 1 0 0 1 72 517.0 Tm (Method) Tj ET
+BT /F1 10 Tf 1 0 0 1 72 491.5 Tm (Figures are unaudited. Where a number is stated to two places it was computed to more and) Tj ET
+BT /F1 10 Tf 1 0 0 1 72 478.0 Tm (rounded once, at the end, rather than at every step.) Tj ET
+
+endstream
+endobj
+8 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 9 0 R /Resources << /Font << /F1 3 0 R /FB 4 0 R /FI 5 0 R >> >> >>
+endobj
+9 0 obj
+<< /Length 1036 >>
+stream
+BT /FB 15 Tf 1 0 0 1 72 720.0 Tm (Notes and assumptions) Tj ET
+BT /F1 10 Tf 1 0 0 1 72 687.8 Tm (Every glyph on this page carries an absolute position. Nothing in the file says that this) Tj ET
+BT /F1 10 Tf 1 0 0 1 72 674.2 Tm (paragraph follows that one, or that either belongs to the section above them. That structure) Tj ET
+BT /F1 10 Tf 1 0 0 1 72 660.8 Tm (was consumed when the document was written, and everything the editor shows you about it was) Tj ET
+BT /F1 10 Tf 1 0 0 1 72 647.2 Tm (reconstructed.) Tj ET
+BT /F1 10 Tf 1 0 0 1 72 623.8 Tm (The editor draws from that reconstruction rather than from a rendering engine, which is why) Tj ET
+BT /F1 10 Tf 1 0 0 1 72 610.2 Tm (the page looks approximately rather than exactly like a viewer would show it. What you are) Tj ET
+BT /F1 10 Tf 1 0 0 1 72 596.8 Tm (looking at is what the library knows.) Tj ET
+BT /FB 13 Tf 1 0 0 1 72 563.2 Tm (Contact) Tj ET
+BT /F1 10 Tf 1 0 0 1 72 537.7 Tm (Questions to the desk of A. Ozdamar, who does not exist.) Tj ET
+0.5 w 72 640 m 540 640 l S
+
+endstream
+endobj
+xref
+0 10
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000127 00000 n 
+0000000224 00000 n 
+0000000326 00000 n 
+0000000431 00000 n 
+0000000577 00000 n 
+0000001818 00000 n 
+0000001964 00000 n 
+trailer
+<< /Size 10 /Root 1 0 R /Info << /Title (Quarterly Report) /Author (Rasura Studio) >> >>
+startxref
+3052
+%%EOF

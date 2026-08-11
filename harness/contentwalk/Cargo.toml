@@ -1,0 +1,17 @@
+[package]
+name = "rasura-contentwalk"
+description = "Walks every page of the corpus, exercising the content layer at scale"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+rasura-cos.workspace = true
+rasura-content.workspace = true
+
+[[bin]]
+name = "contentwalk"
+path = "src/main.rs"

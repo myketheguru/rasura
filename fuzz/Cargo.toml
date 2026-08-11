@@ -1,0 +1,42 @@
+[package]
+name = "rasura-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rasura-cos = { path = "../crates/rasura-cos" }
+
+# Not a workspace member: cargo-fuzz builds these with its own flags on nightly.
+[workspace]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "object_lexer"
+path = "fuzz_targets/object_lexer.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "document_open"
+path = "fuzz_targets/document_open.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "filters"
+path = "fuzz_targets/filters.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "xref"
+path = "fuzz_targets/xref.rs"
+test = false
+doc = false

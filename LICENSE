@@ -1,0 +1,18 @@
+Rasura is dual-licensed under the Apache License, Version 2.0 or the MIT
+license, at your option.
+
+    LICENSE-APACHE   Apache License, Version 2.0
+    LICENSE-MIT      MIT license
+
+This is the same arrangement the Rust project itself uses, and it is chosen for
+the same reason: a permissive licence that a downstream consumer can satisfy
+under whichever of the two their own policy already allows.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in this work shall be dual-licensed as above, without any
+additional terms or conditions.
+
+Third-party corpora are NOT covered by these terms and are not distributed with
+this repository. corpus/external is other people's files under other people's
+licences; .gitignore keeps it out of the tree and corpus/fetch.sh
+reproduces it locally.

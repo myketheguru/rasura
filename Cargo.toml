@@ -1,0 +1,66 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/rasura-cos",
+    "crates/rasura-content",
+    "crates/rasura-layout",
+    "crates/rasura-font",
+    "crates/rasura-edit",
+    "crates/rasura-flow",
+    "crates/rasura",
+    "crates/rasura-wasm",
+    "harness/contentwalk",
+    "harness/invariants",
+    "harness/textdiff",
+    "harness/fontsurvey",
+    "harness/pixeldiff",
+    "harness/wasm-size",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.85"
+repository = "https://github.com/rasura-pdf/rasura"
+
+[workspace.dependencies]
+# The internal crates, declared once with a version.
+#
+# A bare `{ path = ... }` is what a workspace naturally wants and what
+# crates.io refuses: a published crate cannot carry a path dependency, so the
+# version has to be there too. Declaring them here rather than in five
+# manifests means the version cannot drift between them at the moment it
+# matters, which is the moment of publishing.
+rasura-cos = { path = "crates/rasura-cos", version = "0.1.0" }
+rasura-content = { path = "crates/rasura-content", version = "0.1.0" }
+rasura-layout = { path = "crates/rasura-layout", version = "0.1.0" }
+rasura-font = { path = "crates/rasura-font", version = "0.1.0" }
+rasura-edit = { path = "crates/rasura-edit", version = "0.1.0" }
+rasura-flow = { path = "crates/rasura-flow", version = "0.1.0" }
+
+thiserror = "2"
+indexmap = "2"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+weezl = "0.1"
+aes = "0.8"
+cbc = "0.1"
+sha2 = "0.10"
+md-5 = "0.10"
+smallvec = "1"
+
+# Release profile for native builds. Unwinding is kept here so `#[should_panic]`
+# and cargo-fuzz still work; the wasm profile below turns it off.
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+
+# Spec 12.3's build flags. `wasm-opt -Oz --strip-debug` runs afterwards.
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

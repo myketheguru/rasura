@@ -1,0 +1,20 @@
+[package]
+name = "rasura-invariants"
+description = "Invariant suite run over the corpus on every commit (spec 14.2)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+rasura-cos.workspace = true
+rasura-content.workspace = true
+rasura-font.workspace = true
+rasura-layout.workspace = true
+rasura-edit.workspace = true
+
+[[bin]]
+name = "invariants"
+path = "src/main.rs"

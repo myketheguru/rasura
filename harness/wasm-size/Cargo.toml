@@ -1,0 +1,31 @@
+[package]
+name = "rasura-wasm-size"
+description = "Size probe for spec 18 Q6: the WASM floor for the core chunk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+rasura-cos.workspace = true
+rasura-layout = { workspace = true, optional = true }
+rasura-content = { workspace = true, optional = true }
+rasura-font = { workspace = true, optional = true }
+
+[features]
+default = ["full"]
+# The whole `core` chunk of spec 12.3: cos + content + layout + font, which is
+# what a caller gets before any lazy chunk loads. Shaping lands here, and
+# rustybuzz is not small, so this is the variant the 900 KB budget applies to.
+core = ["dep:rasura-layout", "dep:rasura-content", "dep:rasura-font"]
+# Everything a `core` chunk would have to do: open, read, decode, save.
+full = []
+# Open and read objects only -- no save path. Isolates the writer's cost.
+read-only = []
+# Open only. The floor of the floor: lexer, parser, xref, filters, crypt.
+open-only = []

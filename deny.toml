@@ -1,0 +1,66 @@
+# Spec 4.3: licensing is a hard build gate. A violation fails CI.
+
+[licenses]
+version = 2
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.93
+
+[bans]
+multiple-versions = "warn"
+
+# Every internal crate depends on its siblings by path, and a path dependency
+# has no version requirement to check. Denying wildcards outright therefore
+# fails on the workspace's own structure rather than on anything a third party
+# published, which is the opposite of what the rule is for.
+wildcards = "deny"
+allow-wildcard-paths = true
+
+# Spec 4.2: the no-C++ rule. None of these may enter the *shipped* graph.
+deny = [
+    # pdfium is the one exception the spec itself makes: "PDFium may be used as
+    # a test-only reference renderer for the pixel-diff harness; it is never
+    # shipped." `wrappers` states that precisely — banned everywhere except as a
+    # dependency of that harness, so a stray `use` from a shipping crate still
+    # fails the build.
+    { name = "pdfium-render", wrappers = ["rasura-pixeldiff"] },
+    { name = "mupdf" },
+    { name = "poppler" },
+    { name = "lopdf" },
+    { name = "pdf" },
+]
+
+[advisories]
+version = 2
+yanked = "deny"
+
+# Unmaintained notices, not vulnerabilities. Recorded rather than suppressed
+# wholesale: a *security* advisory against either crate still fails this gate,
+# and these two entries are the only exceptions.
+ignore = [
+    # RUSTSEC-2026-0192 / RUSTSEC-2026-0206. `ttf-parser` and `rustybuzz` were
+    # both declared unmaintained by their author. They are spec 8.3's shaping
+    # engine — "this is rustybuzz's job" — and there is no maintained pure-Rust
+    # replacement: the alternative is HarfBuzz, which is C++ and forbidden by
+    # spec 4.2.
+    #
+    # Both are parsers of untrusted input, so this is a real risk being accepted
+    # rather than an administrative one. What bounds it: the font layer already
+    # runs under `cargo-fuzz`, both crates are `#![forbid(unsafe_code)]`, and a
+    # malformed font can therefore panic a worker but not corrupt memory.
+    # Revisit if either gains a security advisory or a maintained fork appears.
+    "RUSTSEC-2026-0192",
+    "RUSTSEC-2026-0206",
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

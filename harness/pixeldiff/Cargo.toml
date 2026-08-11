@@ -1,0 +1,22 @@
+[package]
+name = "rasura-pixeldiff"
+description = "Spec 14.3's pixel-diff harness: render before and after with pdfium"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+# pdfium is a **test-only** reference renderer, per spec 4.2: "PDFium may be
+# used as a test-only reference renderer for the pixel-diff harness; it is never
+# shipped." It lives in a harness, never in `crates/`, and the library has no
+# knowledge of it. The native library is downloaded, not vendored -- see
+# harness/pixeldiff/fetch.ps1.
+[dependencies]
+pdfium-render = "0.9"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[[bin]]
+name = "pixeldiff"
+path = "src/main.rs"

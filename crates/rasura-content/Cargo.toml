@@ -1,0 +1,13 @@
+[package]
+name = "rasura-content"
+description = "Content-stream tokenizer, graphics state machine, and serializer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+rasura-cos.workspace = true
+smallvec.workspace = true
+thiserror.workspace = true

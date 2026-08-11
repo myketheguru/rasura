@@ -1,0 +1,19 @@
+[package]
+name = "rasura"
+description = "True PDF editing: read a document as paragraphs and blocks, edit it, write it back with the untouched bytes intact"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+rasura-cos.workspace = true
+rasura-content.workspace = true
+rasura-layout.workspace = true
+rasura-font.workspace = true
+rasura-edit.workspace = true
+
+[dev-dependencies]
+# The fixture builder, for the examples and tests only.
+rasura-cos.workspace = true

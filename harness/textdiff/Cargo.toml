@@ -1,0 +1,18 @@
+[package]
+name = "rasura-textdiff"
+description = "Differential text extraction against pdf.js (spec 17, Phase 2 exit)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+rasura-cos.workspace = true
+rasura-content.workspace = true
+rasura-layout.workspace = true
+
+[[bin]]
+name = "textdiff"
+path = "src/main.rs"

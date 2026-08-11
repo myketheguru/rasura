@@ -1,0 +1,12 @@
+{
+  "name": "rasura-textdiff-reference",
+  "private": true,
+  "type": "module",
+  "description": "pdf.js reference side of the Phase 2 differential text-extraction harness",
+  "scripts": {
+    "extract": "node extract-pdfjs.mjs"
+  },
+  "devDependencies": {
+    "pdfjs-dist": "^4.10.38"
+  }
+}

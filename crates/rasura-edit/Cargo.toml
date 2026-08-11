@@ -1,0 +1,16 @@
+[package]
+name = "rasura-edit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Mutation and commit for Rasura: transactions, text operations, reflow, stream patching."
+
+[dependencies]
+rasura-cos.workspace = true
+rasura-content.workspace = true
+rasura-layout.workspace = true
+rasura-font.workspace = true
+thiserror.workspace = true
+smallvec.workspace = true

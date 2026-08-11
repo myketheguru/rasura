@@ -1,0 +1,36 @@
+{
+  "name": "rasura",
+  "version": "0.1.0",
+  "description": "True PDF editing in the browser: read a document as paragraphs, change it, and write it back with the untouched bytes intact",
+  "license": "MIT OR Apache-2.0",
+  "repository": "github:rasura-pdf/rasura",
+  "type": "module",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "import": "./src/index.js",
+      "require": "./cjs/index.cjs"
+    },
+    "./worker": "./src/worker.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "README.md",
+    "src/",
+    "cjs/",
+    "types/",
+    "wasm/"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "typescript": "^5"
+  },
+  "scripts": {
+    "test": "npm run types && node --test test/*.test.mjs",
+    "types": "tsc --noEmit"
+  }
+}

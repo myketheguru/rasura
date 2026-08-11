@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM"],
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "skipLibCheck": false,
+    "baseUrl": ".",
+    "paths": { "rasura": ["./types/index.d.ts"] }
+  },
+  "include": ["types/**/*.ts", "test/types.ts"]
+}

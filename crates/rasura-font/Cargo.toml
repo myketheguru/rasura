@@ -1,0 +1,18 @@
+[package]
+name = "rasura-font"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Font parsing, metrics, shaping and glyph injection for Rasura"
+
+[dependencies]
+rasura-cos.workspace = true
+rustybuzz = "0.20.1"
+thiserror.workspace = true
+unicode-script = "0.5.8"
+# Needed for the /ToUnicode CMap parser, so an injection extends the existing
+# mappings rather than replacing them. §8.7's Type 3 fonts will use it too:
+# their glyph procedures are content streams.
+rasura-content.workspace = true

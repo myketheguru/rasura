@@ -1,0 +1,17 @@
+[package]
+name = "rasura-fontsurvey"
+description = "Measurement harness for spec 18 Q1: /ToUnicode coverage across the corpus"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+rasura-cos.workspace = true
+rasura-font.workspace = true
+
+[[bin]]
+name = "fontsurvey"
+path = "src/main.rs"

@@ -1,0 +1,18 @@
+[package]
+name = "rasura-cos"
+description = "Carousel Object System: PDF objects, lexer, xref, filters, decryption, writer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+indexmap.workspace = true
+flate2.workspace = true
+weezl.workspace = true
+aes.workspace = true
+cbc.workspace = true
+sha2.workspace = true
+md-5.workspace = true
