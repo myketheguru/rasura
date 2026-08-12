@@ -752,15 +752,29 @@ function showVerification(verdict, saved) {
 
 async function main() {
   try {
-    // No argument: the glue resolves `rasura_wasm_bg.wasm` against its own
-    // module URL, which is the file sitting beside it. Pages serves it with
-    // the right MIME type, so streaming compilation works.
-    await init();
+    // The path is passed explicitly because the module is built with
+    // `--omit-default-module-path` (crates/rasura-wasm/build.sh), and that flag
+    // does exactly one thing: it removes the `import.meta.url` fallback the
+    // glue would otherwise use when called with no argument. Calling `init()`
+    // bare therefore reached `WebAssembly.instantiate(undefined, …)` — which is
+    // what shipped, and what never once started in a browser.
+    //
+    // Relative to this module, not the document: Pages serves the demo from a
+    // subdirectory, and `./` against the page would resolve to the wrong place
+    // the moment anyone hosts it under a path.
+    await init({ module_or_path: new URL('./rasura_wasm_bg.wasm', import.meta.url) });
   } catch (e) {
+    // State the error and the candidates. This used to assert a CSP without
+    // wasm-unsafe-eval, confidently and wrongly, for every possible cause —
+    // including the one that was actually shipping. A diagnosis nobody checked
+    // is worse than none: it sends the reader somewhere the fault is not.
     document.body.innerHTML =
       '<div class="fatal"><h1>WebAssembly could not start</h1>' +
-      '<p>This page inlines the Rasura module and compiles it in the browser. ' +
-      'A content-security policy without <code>wasm-unsafe-eval</code> blocks that.</p>' +
+      '<p>The module did not compile. Usually one of: the host serves ' +
+      '<code>.wasm</code> as something other than <code>application/wasm</code>, ' +
+      'a content-security policy is missing <code>wasm-unsafe-eval</code>, or ' +
+      '<code>rasura_wasm_bg.wasm</code> is not beside ' +
+      '<code>rasura_wasm.js</code>. The error itself says which:</p>' +
       `<pre>${String(e)}</pre></div>`;
     return;
   }

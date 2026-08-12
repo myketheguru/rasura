@@ -65,6 +65,16 @@ jobs:
       - name: Assemble
         run: node demo/build.mjs
 
+      # And then actually load it. Everything above this line passed on a page
+      # that had never once started in a browser: the module is built with
+      # `--omit-default-module-path` and the page called `init()` bare, so it
+      # reached `WebAssembly.instantiate(undefined, ...)`. Nothing that avoids
+      # a browser can see that, which is why this deploys nothing it has not
+      # watched compile the module and read a document. Chrome is preinstalled
+      # on the runner.
+      - name: The page starts in a real browser
+        run: node demo/browser.mjs
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: demo/dist

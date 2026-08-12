@@ -82,6 +82,27 @@ if (importBlock) {
   check('every WASM function called is imported', notImported.length === 0, notImported.join(', '));
 }
 
+// --- who supplies the module path --------------------------------------------
+//
+// The bug this exists for shipped, deployed green, and never started once in a
+// browser. `crates/rasura-wasm/build.sh` passes `--omit-default-module-path`,
+// whose entire effect is to delete the `import.meta.url` fallback from the
+// glue; the page called `init()` with no argument on the strength of a comment
+// saying the glue would resolve the path itself. It reached
+// `WebAssembly.instantiate(undefined, …)`.
+//
+// Both halves are right here in the two files, so this is decidable: if the
+// glue has no default, the caller must pass one.
+const glueHasDefault = /module_or_path\s*=\s*new URL\(/.test(glue);
+const appPassesPath = /\binit\(\s*\{[^}]*module_or_path/.test(app);
+check(
+  glueHasDefault
+    ? 'the glue defaults the module path, so init() may be called bare'
+    : 'the glue has no default module path, so the app passes one',
+  glueHasDefault || appPassesPath,
+  'built with --omit-default-module-path; call init({ module_or_path: new URL(...) })',
+);
+
 const renderImport = app.match(/import \{([^}]*)\} from '\.\/render\.mjs';/);
 check('the render import is present', Boolean(renderImport));
 if (renderImport) {

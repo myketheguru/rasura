@@ -62,6 +62,17 @@ writeFileSync(join(out, '.nojekyll'), '');
 // for base64. Anything cleverer would be a bundler, and a demo whose point is
 // how little is happening should not need one.
 
+// `String.replace` with a pattern that matches nothing returns the input and
+// says nothing about it. Every substitution below is load-bearing, so a missed
+// one has to be an error: rewording a line in app.mjs would otherwise ship a
+// standalone file that still fetched, still called the wrong initialiser, and
+// looked fine until someone opened it.
+function replaceOnce(text, pattern, replacement, what) {
+  const out = text.replace(pattern, replacement);
+  if (out === text) throw new Error(`standalone: nothing matched for ${what}`);
+  return out;
+}
+
 function standalone() {
   const read = (p) => readFileSync(p, 'utf8');
 
@@ -71,17 +82,23 @@ function standalone() {
 
   const render = read(join(out, 'render.mjs')).replace(/^export function /gm, 'function ');
 
-  const app = read(join(out, 'app.mjs'))
-    .replace(/^import \{[^}]*\} from '\.\/render\.mjs';\s*$/gm, '')
-    .replace(/^import init, \{[\s\S]*?\} from '\.\/rasura_wasm\.js';\s*$/gm, '')
-    .replace(
-      'await init();',
-      'await __wbg_init({ module_or_path: base64ToBytes(RASURA_WASM_BASE64) });',
-    )
-    .replace(
-      /const response = await fetch\('\.\/sample\.pdf'\);[\s\S]*?await open\(new Uint8Array\(await response\.arrayBuffer\(\)\), undefined\);/,
-      'await open(base64ToBytes(SAMPLE_PDF_BASE64), undefined);',
-    );
+  let app = read(join(out, 'app.mjs'));
+  app = replaceOnce(app, /^import \{[^}]*\} from '\.\/render\.mjs';\s*$/gm, '', 'the render import');
+  app = replaceOnce(app, /^import init, \{[\s\S]*?\} from '\.\/rasura_wasm\.js';\s*$/gm, '', 'the glue import');
+  // The whole init call, however it is spelled: the page fetches the module
+  // beside it and this file has it inlined, so the argument differs too.
+  app = replaceOnce(
+    app,
+    /await init\(\{[^}]*\}\);/,
+    'await __wbg_init({ module_or_path: base64ToBytes(RASURA_WASM_BASE64) });',
+    'the init call',
+  );
+  app = replaceOnce(
+    app,
+    /const response = await fetch\('\.\/sample\.pdf'\);[\s\S]*?await open\(new Uint8Array\(await response\.arrayBuffer\(\)\), undefined\);/,
+    'await open(base64ToBytes(SAMPLE_PDF_BASE64), undefined);',
+    'the sample fetch',
+  );
 
   const b64 = (p) => readFileSync(p).toString('base64');
   const html = read(join(out, 'index.html'))

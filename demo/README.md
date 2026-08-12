@@ -50,21 +50,34 @@ A product would use pdf.js. §1 of the spec describes that architecture.
 
 ## What is verified, and what is not
 
-Two checks run in CI and neither needs a browser:
+Three checks run in CI:
 
 - `node demo/test.mjs` drives the **real WASM module** through the same call
   sequence the page makes — open, page model, hit test, edit, session, commit,
   reopen, redact, verify — and checks the pure render core against it.
-- `node demo/lint.mjs` catches the two mistakes that would break the page on
-  load and that `node --check` cannot see: an element id the script reaches for
-  that the markup does not define, and a name imported from the WASM glue that
-  the glue does not export.
+- `node demo/lint.mjs` catches the mistakes that would break the page on load
+  and that `node --check` cannot see: an element id the script reaches for that
+  the markup does not define, a name imported from the WASM glue that the glue
+  does not export, and a page that calls `init()` bare when the module was
+  built without a default path to itself.
+- `node demo/browser.mjs` **loads the page in headless Chrome** over the
+  DevTools protocol — no puppeteer, no install — and checks that the module
+  compiled, the library answered, and the sample document was opened and
+  modelled. Both `index.html` and `standalone.html`, served with real MIME
+  types. Nothing deploys that has not done this.
 
-**Not verified: anything requiring a browser.** The canvas drawing, the pointer
-handling, the layout, and whether the compiled module starts under a given
-host's content-security policy. Those need a real browser and this repository
-has no browser-based test harness. Treat the first load on a new host as
-unproven until someone has looked at it.
+The third one exists because the first two passed for weeks on a page that had
+never once started. The module is built with `--omit-default-module-path`,
+whose entire effect is to remove the glue's `import.meta.url` fallback, and the
+page called `init()` with no argument on the strength of a comment claiming the
+opposite. It reached `WebAssembly.instantiate(undefined, …)` every time. The
+lesson was not "add a lint" — the lint came second. It was that the only way to
+know a page runs is to run it.
+
+**Still not verified: anything a load does not exercise.** The canvas drawing
+is checked for *happening*, not for looking right; pointer handling, dragging,
+and the editing gestures are not driven at all; and no other engine is tested —
+Chrome is not Safari. Treat those as unproven until someone has looked.
 
 ## Files
 
@@ -76,7 +89,8 @@ unproven until someone has looked at it.
 | `render.mjs` | pure: model → draw list, hit testing, minimal edit ranges |
 | `build.mjs` | copies sources and the module into `dist/` |
 | `test.mjs` | the data path, against the real module |
-| `lint.mjs` | the two browser-free correctness checks |
+| `lint.mjs` | the browser-free correctness checks |
+| `browser.mjs` | loads the assembled page in headless Chrome and checks it started |
 
 `app.mjs` calls the WASM surface directly rather than going through the npm
 package. The package starts a Worker and owns the transport, which is right for

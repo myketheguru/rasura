@@ -1,0 +1,268 @@
+// Load the assembled demo in a real browser and check that it started.
+//
+//   node demo/build.mjs && node demo/browser.mjs
+//
+// This is the check whose absence let a page ship that had never once started.
+// The module is built with `--omit-default-module-path`, the page called
+// `init()` with no argument, and every browser-free check passed — because
+// none of them ran the page. lint.mjs now decides that particular disagreement
+// statically, but the general answer to "does it run" is to run it.
+//
+// It drives headless Chrome over the DevTools protocol: no puppeteer, no npm
+// install, no download. `--dump-dom` would be shorter and does not work here —
+// chrome.exe detaches from the console on Windows and its stdout arrives
+// empty, which reads exactly like a page that rendered nothing.
+//
+// Skipped, loudly, when no Chromium is installed. A check that cannot run says
+// so rather than passing.
+
+import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { extname, join, normalize } from 'node:path';
+
+const DIST = 'demo/dist';
+if (!existsSync(join(DIST, 'index.html'))) {
+  console.error(`missing ${DIST}/index.html -- run node demo/build.mjs first`);
+  process.exit(1);
+}
+
+const CHROME = [
+  process.env.CHROME_PATH,
+  'C:/Program Files/Google/Chrome/Application/chrome.exe',
+  'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
+  'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
+  'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
+  '/usr/bin/google-chrome',
+  '/usr/bin/chromium-browser',
+  '/usr/bin/chromium',
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+].find((p) => p && existsSync(p));
+
+if (!CHROME) {
+  // A skip is a courtesy to someone without a browser installed, and a hole in
+  // the gate anywhere else. CI is the one place this must not quietly pass:
+  // silently skipping is how the page shipped broken in the first place.
+  if (process.env.CI) {
+    console.error('no Chromium found, and this is CI -- set CHROME_PATH or install one');
+    process.exit(1);
+  }
+  console.log('no Chromium found -- skipping the browser check');
+  console.log('(this is the only check that proves the page runs; a skip is not a pass)');
+  process.exit(0);
+}
+
+// --- a static server, because file:// is not the deployment ------------------
+//
+// The MIME type matters more than usual: a `.wasm` served as anything else
+// sends the glue down its non-streaming fallback, which is precisely the
+// difference between this passing and a real host failing.
+
+const TYPES = {
+  '.html': 'text/html',
+  '.mjs': 'text/javascript',
+  '.js': 'text/javascript',
+  '.css': 'text/css',
+  '.wasm': 'application/wasm',
+  '.pdf': 'application/pdf',
+};
+
+const server = createServer((req, res) => {
+  const rel = normalize(decodeURIComponent(req.url.split('?')[0])).replace(/^[/\\]+/, '');
+  const path = join(DIST, rel === '' ? 'index.html' : rel);
+  if (!path.startsWith(normalize(DIST)) || !existsSync(path)) {
+    res.writeHead(404).end('not found');
+    return;
+  }
+  res.writeHead(200, { 'content-type': TYPES[extname(path)] ?? 'application/octet-stream' });
+  res.end(readFileSync(path));
+});
+await new Promise((r) => server.listen(0, '127.0.0.1', r));
+const base = `http://127.0.0.1:${server.address().port}`;
+
+// --- the browser -------------------------------------------------------------
+
+const profile = mkdtempSync(join(tmpdir(), 'rasura-browser-'));
+const chrome = spawn(
+  CHROME,
+  [
+    '--headless=new',
+    '--disable-gpu',
+    '--no-sandbox',
+    '--disable-dev-shm-usage',
+    // A fresh profile, or the launch is handed to the browser the developer
+    // already has open and this process exits having done nothing.
+    `--user-data-dir=${profile}`,
+    '--remote-debugging-port=0',
+    'about:blank',
+  ],
+  { stdio: ['ignore', 'ignore', 'pipe'] },
+);
+
+// Chrome writes the port it chose into the profile directory once it is up.
+const portFile = join(profile, 'DevToolsActivePort');
+const started = Date.now();
+let port = null;
+while (!port && Date.now() - started < 30_000) {
+  if (existsSync(portFile)) {
+    const first = readFileSync(portFile, 'utf8').split('\n')[0].trim();
+    if (first) port = first;
+  }
+  if (!port) await new Promise((r) => setTimeout(r, 100));
+}
+if (!port) {
+  chrome.kill();
+  server.close();
+  console.error('the browser never reported a debugging port');
+  process.exit(1);
+}
+
+let nextId = 1;
+/** One CDP session against one fresh tab. */
+async function session(url, run) {
+  const target = await (
+    await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`, { method: 'PUT' })
+  ).json();
+
+  const ws = new WebSocket(target.webSocketDebuggerUrl);
+  const pending = new Map();
+  const events = [];
+  ws.addEventListener('message', (m) => {
+    const msg = JSON.parse(m.data);
+    if (msg.id && pending.has(msg.id)) {
+      const { resolve, reject } = pending.get(msg.id);
+      pending.delete(msg.id);
+      msg.error ? reject(new Error(msg.error.message)) : resolve(msg.result);
+    } else if (msg.method) {
+      events.push(msg);
+    }
+  });
+  await new Promise((resolve, reject) => {
+    ws.addEventListener('open', resolve, { once: true });
+    ws.addEventListener('error', () => reject(new Error('devtools socket failed')), { once: true });
+  });
+
+  const send = (method, params = {}) =>
+    new Promise((resolve, reject) => {
+      const id = nextId++;
+      pending.set(id, { resolve, reject });
+      ws.send(JSON.stringify({ id, method, params }));
+    });
+
+  try {
+    return await run(send, events);
+  } finally {
+    ws.close();
+    await fetch(`http://127.0.0.1:${port}/json/close/${target.id}`);
+  }
+}
+
+let failures = 0;
+const check = (label, ok, detail = '') => {
+  if (ok) console.log(`  ok    ${label}`);
+  else {
+    console.error(`  FAIL  ${label}${detail ? ` -- ${detail}` : ''}`);
+    failures += 1;
+  }
+};
+
+async function load(url) {
+  return session(url, async (send, events) => {
+    await send('Runtime.enable');
+    await send('Log.enable');
+    await send('Page.enable');
+    await send('Page.navigate', { url });
+
+    // Ask the DOM, rather than pattern-matching a dump of it. standalone.html
+    // inlines every source file into a `<script>`, so `outerHTML` contains the
+    // *text of the failure banner* whether or not the banner was ever shown —
+    // which read as a failure on the one file that was working.
+    const probe = `JSON.stringify({
+      fatal: document.querySelector('.fatal pre') ? document.querySelector('.fatal pre').textContent : null,
+      version: (document.getElementById('version') || {}).textContent || '',
+      pageLabel: (document.getElementById('page-label') || {}).textContent || '',
+      inspector: ((document.getElementById('inspector-body') || {}).textContent || '').trim().length,
+      thumbs: document.querySelectorAll('#thumbs canvas, #thumbs button, #thumbs div').length,
+      body: document.body ? document.body.innerHTML.length : 0,
+    })`;
+
+    // The module has to compile and the sample has to open. Poll for the page
+    // to settle rather than sleeping a fixed time: either it started or it
+    // replaced the body with the banner, and both are decidable.
+    const deadline = Date.now() + 30_000;
+    let state = {};
+    while (Date.now() < deadline) {
+      const r = await send('Runtime.evaluate', { expression: probe, returnByValue: true });
+      state = JSON.parse(r.result?.value ?? '{}');
+      if (state.fatal !== null || /rasura \d+\.\d+\.\d+/.test(state.version)) break;
+      await new Promise((r2) => setTimeout(r2, 250));
+    }
+
+    const problems = events
+      .filter((e) => e.method === 'Runtime.exceptionThrown' || e.method === 'Log.entryAdded')
+      .map((e) => {
+        if (e.method === 'Runtime.exceptionThrown') {
+          const d = e.params.exceptionDetails;
+          return d.exception?.description ?? d.text;
+        }
+        const entry = e.params.entry;
+        if (entry.level !== 'error') return null;
+        // With the URL, because "failed to load resource" without one names
+        // nothing and is the whole of what the browser puts in `text`.
+        return entry.url ? `${entry.text} <${entry.url}>` : entry.text;
+      })
+      .filter(Boolean)
+      // The page references no icon, so the browser's speculative request for
+      // one is the browser's business and not a fault in the page.
+      .filter((p) => !/favicon/i.test(p));
+
+    return { state, problems };
+  });
+}
+
+for (const [what, url] of [
+  ['index.html', `${base}/`],
+  ['standalone.html', `${base}/standalone.html`],
+]) {
+  console.log(`\n${what}`);
+  const { state, problems } = await load(url);
+
+  // First, because every check below is vacuous without it: a page that never
+  // rendered matches no failure pattern either.
+  check(`${what}: the page rendered`, state.body > 500, `${state.body ?? 0} bytes of body`);
+
+  check(`${what}: WebAssembly started`, state.body > 500 && !state.fatal, state.fatal ?? '');
+
+  // Started is not ran. `version()` is the first thing written after init, so
+  // this separates "the module compiled" from "the library answered".
+  check(
+    `${what}: the module answered with its version`,
+    /rasura \d+\.\d+\.\d+/.test(state.version ?? ''),
+    state.version || 'nothing in #version',
+  );
+
+  // And the sample was opened and modelled: the markup ships
+  // `<span id="page-label">–</span>`, and only a successful open replaces it.
+  // The sample has two pages.
+  check(
+    `${what}: the sample opened and reported its pages`,
+    state.pageLabel?.trim() === '1 / 2',
+    state.pageLabel ? `#page-label is ${JSON.stringify(state.pageLabel.trim())}` : 'nothing in #page-label',
+  );
+
+  // The inspector is drawn from documentInfo, so an empty one means the model
+  // never crossed the boundary even though the page count did.
+  check(`${what}: the inspector was filled from the model`, state.inspector > 100, `${state.inspector} characters`);
+
+  check(`${what}: nothing threw and nothing logged an error`, problems.length === 0, problems.join(' | '));
+}
+
+chrome.kill();
+server.close();
+console.log(
+  failures === 0
+    ? '\nthe page starts, compiles the module and reads a document in a real browser.'
+    : `\n${failures} problem(s)`,
+);
+process.exit(failures === 0 ? 0 : 1);
