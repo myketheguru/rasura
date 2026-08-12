@@ -145,6 +145,14 @@ pub struct PlacedLine {
     pub text: String,
     /// The line's box: the frame's measure by the line height, positioned.
     pub rect: Rect,
+    /// What it was set in.
+    ///
+    /// Carried rather than recovered. The emitter used to ask a helper for the
+    /// size and get the body size back whatever the block was, so every heading
+    /// was measured at heading size and *drawn* at body size — the wrong glyph
+    /// size at a baseline computed for a different one. The value is right here
+    /// at placement time and costs three words to keep.
+    pub style: TextStyle,
 }
 
 /// Where a block was put.
@@ -362,6 +370,7 @@ pub fn layout(
                 &lines,
                 height,
                 line_height,
+                style,
                 opts,
                 &mut report,
             );
@@ -418,7 +427,7 @@ pub fn layout(
             page: cursor.page,
             frame: cursor.frame,
             rect: Rect::new(frame_rect.x0, cursor.y, frame_rect.x1, cursor.y + height),
-            lines: position(&placed, frame_rect, cursor.y, line_height),
+            lines: position(&placed, frame_rect, cursor.y, line_height, style),
             continued: false,
         });
         report.blocks_placed += 1;
@@ -477,6 +486,7 @@ fn place_atomic(
     lines: &[String],
     height: f64,
     line_height: f64,
+    style: TextStyle,
     opts: &Options,
     report: &mut Report,
 ) {
@@ -499,7 +509,7 @@ fn place_atomic(
         page: cursor.page,
         frame: cursor.frame,
         rect: Rect::new(frame.x0, cursor.y, frame.x1, cursor.y + height),
-        lines: position(lines, frame, cursor.y, line_height),
+        lines: position(lines, frame, cursor.y, line_height, style),
         continued: false,
     });
     report.blocks_placed += 1;
@@ -538,7 +548,7 @@ fn place_continuation(
             page: cursor.page,
             frame: cursor.frame,
             rect: Rect::new(frame.x0, cursor.y, frame.x1, cursor.y + height),
-            lines: position(&placed, frame, cursor.y, line_height),
+            lines: position(&placed, frame, cursor.y, line_height, style),
             continued: true,
         });
         report.blocks_placed += 1;
@@ -553,12 +563,19 @@ fn place_continuation(
     }
 }
 
-fn position(lines: &[String], frame: Rect, top: f64, line_height: f64) -> Vec<PlacedLine> {
+fn position(
+    lines: &[String],
+    frame: Rect,
+    top: f64,
+    line_height: f64,
+    style: TextStyle,
+) -> Vec<PlacedLine> {
     lines
         .iter()
         .enumerate()
         .map(|(i, text)| PlacedLine {
             text: text.clone(),
+            style,
             rect: Rect::new(
                 frame.x0,
                 top + i as f64 * line_height,

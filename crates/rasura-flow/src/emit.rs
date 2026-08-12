@@ -308,7 +308,14 @@ fn page_content(
             // upward, so the baseline is measured from the bottom. The baseline
             // sits one em below the top of the line box, which is where a
             // 1.2-times-size leading puts it.
-            let size = block_size(layout, block.source, opts);
+            //
+            // The size comes from the line, which is what it was measured and
+            // broken at. It used to come from a helper that ignored the block
+            // and returned the body size, so a heading was broken to fit at 18pt
+            // and then drawn at 11pt on a baseline computed for 18 — wrong glyph
+            // size, wrong position, and short lines that looked like a layout
+            // bug rather than an emitter one.
+            let size = line.style.size;
             let baseline = height - (line.rect.y0 + size);
 
             ops::write_op(&mut out, &ops::begin_text(), style);
@@ -329,17 +336,6 @@ fn page_content(
         }
     }
     (out, lines, dropped)
-}
-
-/// The size a placed block was set in.
-///
-/// Recovered from the line box rather than carried on `PlacedBlock`: the
-/// engine's line height is 1.2 times the size, so the box says what the size
-/// was. Keeping it on the block would be better and is a change to the layout
-/// crate's type rather than to this one.
-fn block_size(layout: &Layout, _source: usize, opts: &Options) -> f64 {
-    let _ = layout;
-    opts.body.size
 }
 
 /// Encode text as WinAnsi, counting what will not fit.
@@ -454,6 +450,63 @@ mod tests {
 
         let err = regenerate(&mut doc, &layout, &Options::default()).expect_err("refused");
         assert!(matches!(err, EmitError::NotAccepted), "{err:?}");
+    }
+
+    #[test]
+    fn a_heading_is_drawn_at_the_size_it_was_measured_at() {
+        // The emitter used to ask a helper for the size, and the helper ignored
+        // the block and returned the body size — so a heading broke to fit at
+        // heading size and drew at body size, on a baseline computed for
+        // neither. Nothing caught it, because the reading-order comparison this
+        // file's other test makes does not look at how big anything is.
+        //
+        // The check is on the emitted content stream, since that is where the
+        // discrepancy lived: the `Tf` operand has to be the size the layout
+        // engine used, and the engine's heading sizes are not the body size.
+        use crate::flow::{Block, FlowDocument, Inline};
+
+        let flow = FlowDocument {
+            blocks: vec![
+                Block::Heading { level: 1, inlines: vec![Inline::text("A heading")], source: None },
+                Block::Paragraph {
+                    inlines: vec![Inline::text("Body text follows it.")],
+                    source: None,
+                },
+            ],
+            ..FlowDocument::default()
+        };
+
+        let layout_opts = crate::layout::Options::default();
+        let heading_size = layout_opts.heading_sizes[0];
+        let body_size = layout_opts.body.size;
+        assert_ne!(heading_size, body_size, "the fixture only means anything if these differ");
+
+        let mut doc = Document::open(source(1)).expect("open");
+        let opts = Options { accept_regeneration: true, ..Options::default() };
+        regenerate_document(&mut doc, &flow, &layout_opts, &opts).expect("regenerate");
+
+        // Every page, not just the first: which page a block lands on depends on
+        // the frames inferred from the source document, and the assertion is
+        // about the size a heading is drawn at, not where it ends up.
+        let pages = rasura_content::page::pages(&doc).expect("pages");
+        let mut sizes: Vec<String> = Vec::new();
+        for page in &pages.pages {
+            let Some(id) = content_id(&doc, &page.dict) else { continue };
+            let content = doc.decoded_stream(id).expect("the regenerated stream");
+            for line in String::from_utf8_lossy(&content).lines() {
+                if let Some(before) = line.strip_suffix(" Tf")
+                    && let Some(size) = before.split_whitespace().last()
+                {
+                    sizes.push(size.to_string());
+                }
+            }
+        }
+
+        assert!(!sizes.is_empty(), "no Tf operators emitted at all");
+        assert!(
+            sizes.iter().any(|s| s.parse::<f64>() == Ok(heading_size)),
+            "the heading was not drawn at {heading_size}; sizes emitted: {sizes:?}",
+        );
     }
 
     #[test]
