@@ -28,7 +28,10 @@ case "$(uname -s)" in
 esac
 
 echo "pdfium: fetching $RELEASE ($asset)"
-curl -fsSL "https://github.com/bblanchon/pdfium-binaries/releases/download/$RELEASE/$asset" \
+# --retry-all-errors, as in corpus/fetch-font.sh: a dropped connection is the
+# failure that happens here, and plain --retry does not cover it.
+curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
+  "https://github.com/bblanchon/pdfium-binaries/releases/download/$RELEASE/$asset" \
   -o "/tmp/$asset"
 tar -xzf "/tmp/$asset" -C "$dest"
 
