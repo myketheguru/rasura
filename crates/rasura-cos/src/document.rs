@@ -52,6 +52,10 @@ pub enum LoadMode {
     Xref,
     /// The table was rebuilt by scanning. Forces `SaveMode::FullRewrite`.
     Reconstructed,
+    /// There was no file: the document was built by [`Document::new`]. Forces
+    /// `SaveMode::FullRewrite`, for the plainest of reasons — an incremental
+    /// save appends to original bytes, and there are none.
+    Created,
 }
 
 pub struct Document {
@@ -139,10 +143,80 @@ struct ObjStmCache {
     first: usize,
 }
 
+impl Default for Document {
+    /// An empty document, as [`Document::new`].
+    fn default() -> Document {
+        Document::new()
+    }
+}
+
 impl Document {
     // -----------------------------------------------------------------------
     // Loading
     // -----------------------------------------------------------------------
+
+    /// A new, empty document: a catalog and a page tree with no pages in it.
+    ///
+    /// The catalog exists from the first moment on purpose. Every layer above
+    /// this one assumes `catalog()` resolves — `open_with` refuses to return a
+    /// document where it does not (see the `/Root` check below), and the writer
+    /// walks reachability from `/Root`. Handing back a document that had to be
+    /// made valid by its caller would put that invariant in the caller's hands,
+    /// where sooner or later it would be dropped.
+    ///
+    /// Object 1 is the catalog and object 2 the root `/Pages` node. Nothing
+    /// depends on those numbers; they are simply what an empty allocator hands
+    /// out first.
+    ///
+    /// Saving is always a full rewrite ([`LoadMode::Created`]): an incremental
+    /// save appends to the original bytes, and a created document has none.
+    pub fn new() -> Document {
+        Document::with_version("1.7")
+    }
+
+    /// As [`Document::new`], at a stated version.
+    ///
+    /// 1.7 is the default because it is ISO 32000-1, which is what the rest of
+    /// this library implements. Ask for 2.0 only if you mean it.
+    pub fn with_version(version: &str) -> Document {
+        let mut doc = Document {
+            buf: Vec::new(),
+            header_offset: 0,
+            version: version.to_string(),
+            xref: XrefTable::default(),
+            decryptor: None,
+            load_mode: LoadMode::Created,
+            leniencies: RefCell::new(Vec::new()),
+            header_index: RefCell::new(None),
+            cache: RefCell::new(HashMap::new()),
+            spans: RefCell::new(HashMap::new()),
+            decoded: RefCell::new(HashMap::new()),
+            objstm: RefCell::new(HashMap::new()),
+            dirty: BTreeMap::new(),
+            deleted: BTreeMap::new(),
+            next_number: 1,
+            redacted: false,
+            protection: ProtectionChange::Unchanged,
+        };
+
+        let catalog = doc.reserve(1)[0];
+        let pages = doc.reserve(1)[0];
+
+        let mut catalog_dict = Dictionary::new();
+        catalog_dict.insert("Type", Object::name("Catalog"));
+        catalog_dict.insert("Pages", Object::Reference(pages));
+        doc.set(catalog, Object::Dictionary(catalog_dict));
+
+        let mut pages_dict = Dictionary::new();
+        pages_dict.insert("Type", Object::name("Pages"));
+        pages_dict.insert("Kids", Object::Array(Vec::new()));
+        pages_dict.insert("Count", Object::Integer(0));
+        doc.set(pages, Object::Dictionary(pages_dict));
+
+        doc.xref.trailer.insert("Root", Object::Reference(catalog));
+        doc.xref.trailer.insert("Size", Object::Integer(doc.next_number as i64));
+        doc
+    }
 
     pub fn open(bytes: Vec<u8>) -> Result<Document> {
         Document::open_with(bytes, &OpenOptions::default())
@@ -1039,6 +1113,48 @@ pub fn name(s: &str) -> Name {
 mod tests {
     use super::*;
     use crate::testutil;
+
+    #[test]
+    fn a_created_document_is_valid_the_moment_it_exists() {
+        let doc = Document::new();
+        assert_eq!(doc.load_mode(), LoadMode::Created);
+        assert!(doc.bytes().is_empty(), "a created document has no original bytes");
+
+        // The invariant every layer above this one relies on, and the reason
+        // `new` builds the catalog itself rather than leaving it to the caller.
+        let catalog = doc.catalog().expect("a created document has a catalog");
+        let catalog = catalog.as_dict().expect("the catalog is a dictionary");
+        assert_eq!(catalog.get("Type").and_then(Object::as_name), Some(&Name::new("Catalog")));
+
+        let pages = doc.resolve(catalog.get("Pages").expect("/Pages")).expect("it resolves");
+        let pages = pages.as_dict().expect("the page tree is a dictionary");
+        assert_eq!(pages.get("Count").and_then(Object::as_i64), Some(0));
+        assert_eq!(pages.get("Kids").and_then(Object::as_array).map(|k| k.len()), Some(0));
+    }
+
+    #[test]
+    fn a_created_document_saves_and_reopens() {
+        let doc = Document::new();
+        let saved = crate::writer::save(&doc, &crate::writer::SaveOptions::default()).unwrap();
+
+        // Never incremental: there is nothing to append to.
+        assert_eq!(saved.mode, crate::writer::SaveMode::FullRewrite);
+        assert!(
+            saved.bytes.starts_with(b"%PDF-1.7"),
+            "{:?}",
+            &saved.bytes[..16.min(saved.bytes.len())]
+        );
+        assert!(saved.bytes.ends_with(b"%%EOF\n"));
+
+        // The round trip is the claim: bytes this library wrote, parsed by the
+        // same reader it uses on everyone else's files, with no leniencies --
+        // a created document that only opens by recovery would be a failure
+        // dressed as a pass.
+        let reopened = Document::open(saved.bytes).expect("what was written can be read");
+        assert_eq!(reopened.load_mode(), LoadMode::Xref);
+        assert!(reopened.catalog().is_ok());
+        assert_eq!(reopened.leniencies(), Vec::new());
+    }
 
     #[test]
     fn opens_a_minimal_classic_file() {

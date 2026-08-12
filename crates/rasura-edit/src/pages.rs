@@ -84,6 +84,20 @@ pub struct PageEdit {
     pub retargeted: usize,
 }
 
+/// The object id of the catalog's root `/Pages` node.
+///
+/// Only needed for the empty-tree case: with pages present, the parent comes
+/// from the anchor page's own recorded `/Parent`, which is the tree the walk
+/// actually saw rather than the one the catalog claims.
+fn page_tree_root(doc: &Document) -> Result<ObjId, PageError> {
+    let catalog = doc.catalog().map_err(|e| PageError::Cos(e.to_string()))?;
+    catalog
+        .as_dict()
+        .and_then(|d| d.get("Pages"))
+        .and_then(Object::as_reference)
+        .ok_or_else(|| PageError::Cos("the catalog has no /Pages reference".into()))
+}
+
 /// Remove a page, fixing up everything that pointed at it. Spec 10.9.
 pub fn delete_page(doc: &Document, pages: &PageTree, index: usize) -> Result<PageEdit, PageError> {
     let page = pages.pages.get(index).ok_or(PageError::NoSuchPage(index))?;
@@ -234,13 +248,19 @@ pub fn insert_page(
     spec: &PageSpec,
 ) -> Result<PageEdit, PageError> {
     // Where it goes: before the page currently at `index`, or after the last.
-    let anchor = pages
-        .pages
-        .get(index)
-        .or_else(|| pages.pages.last())
-        .ok_or(PageError::NoSuchPage(index))?;
-    let (parent_id, anchor_slot) = anchor.parent.ok_or(PageError::NoParent(index))?;
-    let slot = if index >= pages.pages.len() { anchor_slot + 1 } else { anchor_slot };
+    //
+    // With no pages at all there is nothing to anchor against, and this used to
+    // stop here — which is why a document could be created and never given a
+    // first page. The root `/Pages` node is the parent in that case, and it
+    // exists in every document this library will hand you: `Document::new`
+    // builds one, and `open` refuses a file whose catalog does not resolve.
+    let (parent_id, slot) = match pages.pages.get(index).or_else(|| pages.pages.last()) {
+        Some(anchor) => {
+            let (parent_id, anchor_slot) = anchor.parent.ok_or(PageError::NoParent(index))?;
+            (parent_id, if index >= pages.pages.len() { anchor_slot + 1 } else { anchor_slot })
+        }
+        None => (page_tree_root(doc)?, 0),
+    };
 
     // Two new objects. Their *numbers* are claimed here; the objects themselves
     // are created by the session along with every other change, so that undo
@@ -551,6 +571,43 @@ mod tests {
     use crate::EditSession;
     use rasura_cos::SaveOptions;
     use rasura_cos::testutil::ClassicBuilder;
+
+    #[test]
+    fn the_first_page_of_an_empty_document_can_be_created() {
+        // The whole point of `Document::new`: before this, a created document
+        // had a page tree that nothing could ever put a page into, because
+        // `insert_page` needed an existing page to anchor against.
+        let mut doc = Document::new();
+        let tree = rasura_content::page::pages(&doc).unwrap();
+        assert_eq!(tree.pages.len(), 0);
+
+        let mut canvas = crate::Canvas::new(crate::numfmt::NumberStyle::default());
+        canvas.fill_rgb(0.1, 0.2, 0.9);
+        canvas.rect(72.0, 72.0, 200.0, 100.0);
+        canvas.fill();
+        let spec = PageSpec { content: canvas.finish().unwrap(), ..PageSpec::default() };
+
+        let edit = insert_page(&mut doc, &tree, 0, &spec).expect("the first page");
+        {
+            let mut session = EditSession::new(&mut doc);
+            session.set_objects("insert page", &edit.changes, edit.fidelity.clone()).unwrap();
+        }
+
+        // Through the reader, not the writer's own bookkeeping.
+        let tree = rasura_content::page::pages(&doc).unwrap();
+        assert_eq!(tree.pages.len(), 1);
+        assert_eq!(tree.pages[0].media_box.x1, 612.0);
+        assert_eq!(tree.pages[0].media_box.y1, 792.0);
+
+        // And it survives a round trip as a file, which is the claim that
+        // matters: parsed by the same reader used on everyone else's PDFs,
+        // with nothing forgiven along the way.
+        let saved = rasura_cos::writer::save(&doc, &SaveOptions::default()).unwrap();
+        let reopened = Document::open(saved.bytes).expect("a created document reopens");
+        assert_eq!(reopened.leniencies(), Vec::new());
+        let tree = rasura_content::page::pages(&reopened).unwrap();
+        assert_eq!(tree.pages.len(), 1);
+    }
 
     /// Three pages, an outline pointing at page two, a link on page one
     /// pointing at page two through an action, a named destination for page

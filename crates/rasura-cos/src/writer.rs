@@ -134,8 +134,13 @@ pub fn effective_mode(doc: &Document, opts: &SaveOptions) -> SaveMode {
         // one file key for the whole document. Adding protection incrementally
         // does not make a weakly protected file; it makes an unreadable one.
         _ if doc.protection_change().is_change() => SaveMode::FullRewrite,
-        Some(SaveMode::Incremental) | None if doc.load_mode() == LoadMode::Reconstructed => {
-            // Spec 5.3: recovery forces a full rewrite.
+        Some(SaveMode::Incremental) | None
+            if matches!(doc.load_mode(), LoadMode::Reconstructed | LoadMode::Created) =>
+        {
+            // Spec 5.3: recovery forces a full rewrite. A created document
+            // forces one for a simpler reason -- an incremental save appends to
+            // the original bytes and there are none, so the result would be a
+            // revision of nothing.
             SaveMode::FullRewrite
         }
         Some(m) => m,
