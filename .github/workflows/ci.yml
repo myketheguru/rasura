@@ -227,6 +227,14 @@ jobs:
             target/registerfont/before.pdf target/registerfont/after.pdf \
             --unchanged-before 150 --artefacts target/registerfont/diff
 
+      # The package's suite and the consumer check below both open a seed
+      # fixture, and the seeds are generated rather than committed — .gitignore
+      # keeps them out because they are derived. Without this, 16 of the 41
+      # package tests die on ENOENT and the two that matter most (a byte-exact
+      # save, an edit that round-trips) never run at all.
+      - name: Generate the seed corpus
+        run: cargo run -p rasura-invariants -- --write-seed corpus/files
+
       # The npm package on top of it. Spec 12.4 asks for hand-written
       # declarations with no `any`; `npm test` runs `tsc --noEmit` over a file
       # of deliberate mistakes, so a return type widening to `any` fails the
@@ -563,3 +571,15 @@ jobs:
           for target in object_lexer document_open filters xref; do
             cargo +nightly fuzz run "$target" -- -max_total_time=60 -rss_limit_mb=2048
           done
+
+      # Without this, a crash arrives as a stack of unsymbolised addresses and
+      # the input that caused it is deleted with the runner -- which is most of
+      # what a fuzzer is for. The artefact is the reproducer: drop it into
+      # fuzz/corpus and `cargo fuzz run <target> <file>` replays it exactly.
+      - name: Keep the reproducer
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crash
+          path: fuzz/artifacts/
+          if-no-files-found: ignore

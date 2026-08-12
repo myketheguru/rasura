@@ -13,9 +13,24 @@ import { fileURLToPath } from "node:url";
 
 import { Pdf, PdfError, CODES } from "../src/index.js";
 
+// A flate-compressed classic-xref document, chosen rather than defaulted to:
+// the byte-identical save and the edit round-trip are only worth much over a
+// file whose content streams are compressed and whose xref is the old kind.
+//
+// It is generated, not committed, so a fresh clone does not have it. Say so
+// here — the bare ENOENT this used to throw named a path and not a remedy, and
+// it threw sixteen times.
 const SAMPLE = fileURLToPath(
   new URL("../../corpus/files/classic-flate-content.pdf", import.meta.url),
 );
+if (!existsSync(SAMPLE)) {
+  console.error(
+    `missing ${SAMPLE}\n` +
+      "the seed fixtures are generated; run this from the repository root:\n" +
+      "  cargo run -p rasura-invariants -- --write-seed corpus/files",
+  );
+  process.exit(1);
+}
 const bytes = () => new Uint8Array(readFileSync(SAMPLE));
 
 /** Open, run, close — so a failing assertion cannot leak a worker. */

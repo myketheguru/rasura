@@ -247,8 +247,19 @@ fn find_catalog(buf: &[u8], table: &XrefTable) -> Option<crate::object::ObjId> {
 /// Read the object-stream header without needing the whole document machinery.
 /// Shared with the document layer's ObjStm expansion.
 pub(crate) fn objstm_pairs(data: &[u8], n: usize, first: usize) -> Vec<(u32, usize)> {
-    let mut lx = Lexer::new(&data[..first.min(data.len())]);
-    let mut out = Vec::with_capacity(n);
+    let header = first.min(data.len());
+    let mut lx = Lexer::new(&data[..header]);
+    // `n` is `/N`, a number the file chose, and nothing upstream has checked it
+    // against the bytes that would have to hold those pairs. Reserving for it
+    // directly panicked with "capacity overflow" on a stream declaring more
+    // pairs than a `Vec<(u32, usize)>` can address -- found by the fuzzer, and
+    // an allocation is a poor place to learn a file is malformed.
+    //
+    // The loop below is already bounded: it reads two integers and stops at the
+    // first token that is not one, so the header's own length is the real
+    // limit. A pair is at least four bytes -- two digits and two separators --
+    // so this is the reservation, and `n` still bounds the loop.
+    let mut out = Vec::with_capacity(n.min(header / 4 + 1));
     for _ in 0..n {
         let (Token::Integer(num), Token::Integer(off)) =
             (lx.next_token().token, lx.next_token().token)
@@ -277,6 +288,21 @@ mod tests {
         b.extend_from_slice(b"xref\n0 4\n0000000000 65535 f \n");
         b.extend_from_slice(b"trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n999999\n%%EOF\n");
         b
+    }
+
+    #[test]
+    fn a_declared_pair_count_does_not_size_the_allocation() {
+        // The fuzzer's find: `/N` is a number in the file, and reserving for it
+        // panicked with "capacity overflow" long before the loop could notice
+        // there were no pairs to read. The header holds two, and that is what
+        // must come back however large the file claims.
+        let data = b"1 0 2 15 ".to_vec();
+        let pairs = objstm_pairs(&data, usize::MAX, data.len());
+        assert_eq!(pairs, vec![(1, 0), (2, 15)]);
+
+        // And with nothing to read at all, which is the shape that crashed.
+        assert!(objstm_pairs(b"", usize::MAX, 0).is_empty());
+        assert!(objstm_pairs(b"garbage", usize::MAX, 7).is_empty());
     }
 
     #[test]

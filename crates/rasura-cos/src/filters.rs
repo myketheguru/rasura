@@ -634,8 +634,12 @@ impl PredictorSpec {
         (self.colors * self.bpc).div_ceil(8).max(1)
     }
 
+    /// `/Columns` is unbounded in the file and `colors * bpc` can be 512, so
+    /// this product overflows for a large enough declared row -- silently, in
+    /// release, which is worse than the panic it is in debug. Saturating leaves
+    /// an absurd row absurd, and the callers that allocate from it check.
     fn row_bytes(&self) -> usize {
-        (self.columns * self.colors * self.bpc).div_ceil(8)
+        self.columns.saturating_mul(self.colors).saturating_mul(self.bpc).div_ceil(8)
     }
 }
 
@@ -670,8 +674,22 @@ fn undo_predictor(data: &[u8], parms: Option<&Dictionary>) -> Result<Vec<u8>> {
 fn png_predictor_decode(data: &[u8], spec: &PredictorSpec) -> Result<Vec<u8>> {
     let row_bytes = spec.row_bytes();
     let bpp = spec.bpp();
-    if row_bytes == 0 {
+    if row_bytes == 0 || data.is_empty() {
         return Ok(Vec::new());
+    }
+    // A truncated final row is zero-filled below, deliberately. That courtesy
+    // becomes an unbounded allocation when the *declared* row is wider than the
+    // entire stream: ten bytes and a large enough `/Columns` would ask for two
+    // gigabytes of zeroes. Spec 14.4 -- never allocate unboundedly on input.
+    // A stream too short for a single row is malformed by any reading.
+    if row_bytes > data.len() {
+        return Err(CosError::FilterFailed {
+            filter: "Predictor".into(),
+            reason: format!(
+                "/Columns implies a {row_bytes}-byte row, longer than the whole {}-byte stream",
+                data.len()
+            ),
+        });
     }
     let mut out = Vec::with_capacity(data.len());
     let mut prev = vec![0u8; row_bytes];
@@ -974,6 +992,25 @@ mod tests {
             assert!(png_predictor_decode(&data, &spec).is_ok(), "filter {ft}");
         }
         assert!(png_predictor_decode(&[9, 1, 2, 3, 4], &spec).is_err());
+    }
+
+    #[test]
+    fn a_row_wider_than_the_stream_is_refused_rather_than_allocated() {
+        // Spec 14.4: never allocate unboundedly on input. `/Columns` is a
+        // number in the file, and the zero-fill for a truncated final row would
+        // otherwise turn five bytes into a request for two gigabytes.
+        let spec = parms(&[
+            ("Predictor", 12),
+            ("Colors", 1),
+            ("BitsPerComponent", 8),
+            ("Columns", 2_000_000_000),
+        ]);
+        assert!(apply_predictor(&[0, 1, 2, 3, 4], Some(&spec)).is_err());
+
+        // And the product itself no longer wraps. 32 colours at 16 bits is the
+        // widest a sample can be, so this row is well past `usize`.
+        let huge = PredictorSpec { predictor: 12, colors: 32, bpc: 16, columns: usize::MAX / 64 };
+        assert_eq!(huge.row_bytes(), usize::MAX.div_ceil(8));
     }
 
     #[test]

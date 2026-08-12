@@ -475,19 +475,11 @@ pub fn parse_objstm(dict: &Dictionary, data: Vec<u8>) -> Result<ObjStmContents> 
     let n = dict.get("N").and_then(Object::as_i64).unwrap_or(0).max(0) as usize;
     let first = dict.get("First").and_then(Object::as_usize).unwrap_or(0);
 
-    let mut lx = Lexer::new(&data[..first.min(data.len())]);
-    let mut offsets = Vec::with_capacity(n);
-    for _ in 0..n {
-        let num = match lx.next_token().token {
-            Token::Integer(v) if v >= 0 => v as u32,
-            _ => break,
-        };
-        let off = match lx.next_token().token {
-            Token::Integer(v) if v >= 0 => v as usize,
-            _ => break,
-        };
-        offsets.push((num, off));
-    }
+    // One implementation, rather than the two that had drifted apart here: the
+    // recovery path had the same header parser, and the unbounded reservation
+    // that went with it, so a fix applied to one of them would have left the
+    // other panicking.
+    let offsets = crate::recovery::objstm_pairs(&data, n, first);
 
     Ok(ObjStmContents { offsets, data, first })
 }
