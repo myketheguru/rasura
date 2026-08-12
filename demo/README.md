@@ -66,6 +66,17 @@ Three checks run in CI:
   modelled. Both `index.html` and `standalone.html`, served with real MIME
   types. Nothing deploys that has not done this.
 
+  It also points at a deployed site, which is the only way to learn whether
+  what shipped is what was tested:
+
+  ```bash
+  RASURA_DEMO_ORIGIN=https://myketheguru.github.io/rasura node demo/browser.mjs
+  ```
+
+  That run has earned its keep once already: against a local server the sample
+  fetch had always finished before the check looked, and against the real host
+  it had not.
+
 The third one exists because the first two passed for weeks on a page that had
 never once started. The module is built with `--omit-default-module-path`,
 whose entire effect is to remove the glue's `import.meta.url` fallback, and the

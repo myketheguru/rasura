@@ -22,8 +22,16 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { extname, join, normalize } from 'node:path';
 
+// Point it at a deployed site instead of the local build:
+//
+//   RASURA_DEMO_ORIGIN=https://myketheguru.github.io/rasura node demo/browser.mjs
+//
+// Same checks, real host, real headers — the only way to find out whether what
+// was deployed is what was tested.
+const ORIGIN = process.env.RASURA_DEMO_ORIGIN?.replace(/\/+$/, '');
+
 const DIST = 'demo/dist';
-if (!existsSync(join(DIST, 'index.html'))) {
+if (!ORIGIN && !existsSync(join(DIST, 'index.html'))) {
   console.error(`missing ${DIST}/index.html -- run node demo/build.mjs first`);
   process.exit(1);
 }
@@ -68,18 +76,21 @@ const TYPES = {
   '.pdf': 'application/pdf',
 };
 
-const server = createServer((req, res) => {
-  const rel = normalize(decodeURIComponent(req.url.split('?')[0])).replace(/^[/\\]+/, '');
-  const path = join(DIST, rel === '' ? 'index.html' : rel);
-  if (!path.startsWith(normalize(DIST)) || !existsSync(path)) {
-    res.writeHead(404).end('not found');
-    return;
-  }
-  res.writeHead(200, { 'content-type': TYPES[extname(path)] ?? 'application/octet-stream' });
-  res.end(readFileSync(path));
-});
-await new Promise((r) => server.listen(0, '127.0.0.1', r));
-const base = `http://127.0.0.1:${server.address().port}`;
+const server = ORIGIN
+  ? null
+  : createServer((req, res) => {
+      const rel = normalize(decodeURIComponent(req.url.split('?')[0])).replace(/^[/\\]+/, '');
+      const path = join(DIST, rel === '' ? 'index.html' : rel);
+      if (!path.startsWith(normalize(DIST)) || !existsSync(path)) {
+        res.writeHead(404).end('not found');
+        return;
+      }
+      res.writeHead(200, { 'content-type': TYPES[extname(path)] ?? 'application/octet-stream' });
+      res.end(readFileSync(path));
+    });
+if (server) await new Promise((r) => server.listen(0, '127.0.0.1', r));
+const base = ORIGIN ?? `http://127.0.0.1:${server.address().port}`;
+console.log(`serving from ${base}`);
 
 // --- the browser -------------------------------------------------------------
 
@@ -184,18 +195,22 @@ async function load(url) {
       pageLabel: (document.getElementById('page-label') || {}).textContent || '',
       inspector: ((document.getElementById('inspector-body') || {}).textContent || '').trim().length,
       thumbs: document.querySelectorAll('#thumbs canvas, #thumbs button, #thumbs div').length,
+      result: (document.getElementById('result') || {}).textContent || '',
       body: document.body ? document.body.innerHTML.length : 0,
     })`;
 
-    // The module has to compile and the sample has to open. Poll for the page
-    // to settle rather than sleeping a fixed time: either it started or it
-    // replaced the body with the banner, and both are decidable.
-    const deadline = Date.now() + 30_000;
+    // The module has to compile *and* the sample has to open, and those are two
+    // events. Waiting only for the version -- written between them -- passed
+    // against a local server, where the fetch had already finished, and failed
+    // against the deployed site, where it had not. Wait for the second one.
+    const deadline = Date.now() + 45_000;
     let state = {};
     while (Date.now() < deadline) {
       const r = await send('Runtime.evaluate', { expression: probe, returnByValue: true });
       state = JSON.parse(r.result?.value ?? '{}');
-      if (state.fatal !== null || /rasura \d+\.\d+\.\d+/.test(state.version)) break;
+      const started = /rasura \d+\.\d+\.\d+/.test(state.version);
+      const opened = state.pageLabel && state.pageLabel.trim() !== '–';
+      if (state.fatal !== null || (started && opened)) break;
       await new Promise((r2) => setTimeout(r2, 250));
     }
 
@@ -248,7 +263,11 @@ for (const [what, url] of [
   check(
     `${what}: the sample opened and reported its pages`,
     state.pageLabel?.trim() === '1 / 2',
-    state.pageLabel ? `#page-label is ${JSON.stringify(state.pageLabel.trim())}` : 'nothing in #page-label',
+    // With the status line, because "#page-label is –" says the open did not
+    // finish and nothing about why. The page puts the reason in #result.
+    state.pageLabel
+      ? `#page-label is ${JSON.stringify(state.pageLabel.trim())}, #result is ${JSON.stringify(state.result ?? '')}`
+      : 'nothing in #page-label',
   );
 
   // The inspector is drawn from documentInfo, so an empty one means the model
@@ -259,7 +278,7 @@ for (const [what, url] of [
 }
 
 chrome.kill();
-server.close();
+server?.close();
 console.log(
   failures === 0
     ? '\nthe page starts, compiles the module and reads a document in a real browser.'
