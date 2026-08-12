@@ -258,7 +258,10 @@ jobs:
               console.error('package.json has an install script; spec 12.4 forbids it');
               process.exit(1);
             }"
-          npm pack --pack-destination "$RUNNER_TEMP" --prefix js
+          # `npm pack ./js`, not `--prefix js`: --prefix moves where npm
+          # *installs*, not where it looks for the manifest, so this read the
+          # repository root and found no package.json there.
+          npm pack --pack-destination "$RUNNER_TEMP" ./js
           mkdir -p "$RUNNER_TEMP/consumer"
           cd "$RUNNER_TEMP/consumer"
           echo '{"name":"consumer","type":"module","private":true}' > package.json
