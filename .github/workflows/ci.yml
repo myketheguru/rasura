@@ -351,6 +351,45 @@ jobs:
           cargo run --release -p rasura-pixeldiff -- \
             target/realfont/before.pdf target/realfont/after.pdf \
             --artefacts target/realfont/diff
+
+      # Composition: a document built from no input file at all, with a typeface
+      # the document has never seen embedded into it from scratch.
+      #
+      # This needs all three validators and none of them is redundant. The Rust
+      # tests assert the right dictionary keys were written. `Document::open`
+      # says the bytes parse. Neither can see the failure this path actually
+      # produces -- a `/FontDescriptor` whose flags or bounding box are wrong,
+      # or a `/FontFile2` subset missing the `cmap` a simple font resolves codes
+      # through -- because that file is structurally perfect and renders as
+      # blank boxes. pdf.js building the operator list forces the font program
+      # to be parsed and every glyph translated; pdfium says there is ink.
+      - name: Compose two documents from nothing
+        run: cargo run --release -p rasura-edit --example compose -- target/compose
+
+      - name: pdf.js builds the embedded fonts
+        run: |
+          node harness/textdiff/validate-injected.mjs target/compose/simple.pdf \
+            "Composed from nothing.No input file, one embeddedtypeface, real glyphs."
+          node harness/textdiff/validate-injected.mjs target/compose/composite.pdf \
+            "Ελληνικά and Englishin one Type0 font,addressed by glyph id."
+
+      # `--identical` against itself is deliberate: the assertion being made is
+      # not that two files match but that pdfium can render this one at all, and
+      # the harness reports where the ink ends. A font that embedded wrongly
+      # renders a blank page, and a blank page has no ink to report.
+      - name: pdfium renders what was composed
+        run: |
+          set -eu
+          for f in simple composite; do
+            cargo run --release -p rasura-pixeldiff -- \
+              "target/compose/$f.pdf" "target/compose/$f.pdf" --identical \
+              --artefacts "target/compose/render-$f" | tee "target/compose/$f.txt"
+            # "original ink ends at column -1" is an empty page.
+            if grep -q 'ink ends at column -1' "target/compose/$f.txt"; then
+              echo "::error::$f.pdf rendered with no ink: the embedded font drew nothing"
+              exit 1
+            fi
+          done
       # Spec 14.2 I2, the pixel half, which has been "needs the render harness"
       # since Phase 1. A two-page document, a word replaced on page one:
       #

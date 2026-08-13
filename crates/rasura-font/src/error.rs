@@ -23,6 +23,16 @@ pub enum FontError {
     #[error("font is missing the {0} table")]
     MissingTable(&'static str),
 
+    /// A well-formed font this path will not handle.
+    ///
+    /// Distinct from every variant above: nothing is wrong with the file. The
+    /// embedding path declines CFF outlines this way rather than writing them
+    /// into a `/FontFile2`, which would produce a document that passes every
+    /// structural check and renders nothing — a failure the caller could only
+    /// find by looking at a page.
+    #[error("unsupported font: {0}")]
+    Unsupported(&'static str),
+
     /// The font is already as large as its format allows.
     ///
     /// Distinct from `Malformed` on purpose. A malformed font is a defect in

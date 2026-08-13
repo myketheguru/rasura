@@ -20,6 +20,8 @@ pub mod cff_write;
 pub mod charstring;
 pub mod cmap;
 pub mod cmap_write;
+pub mod create;
+pub mod describe;
 pub mod embed;
 pub mod error;
 pub mod fixture;
