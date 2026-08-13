@@ -1,8 +1,13 @@
 # Rasura: build report and spec parity
 
-**As of this writing.** 1,159 Rust tests and 41 JavaScript tests, all passing.
-1,030 corpus files green on the invariant suite, zero failing. `cargo deny
-check` green on all four checks. 419 KB gzipped against a 900 KB budget.
+**As of this writing.** 1,192 Rust tests passing. 1,030 corpus files green on the
+invariant suite, zero failing. `cargo deny check` green on all four checks. The
+JavaScript suite's 41 tests **have not been run since `create` was added** — see
+the caveats in §8; the module itself is driven from node on every build and
+passes. 419 KB gzipped against a 900 KB budget. Nine
+CI jobs green, and the documentation site and editor deployed at
+<https://myketheguru.github.io/rasura/> — checked in a real browser, against the
+deployed origin, on every push.
 
 This document is the honest account: what exists, what does not, what was
 refused on purpose, and what was got wrong and then fixed. The companion
@@ -21,14 +26,23 @@ to depend on the library.
 | Reconstruction: runs → lines → paragraphs → model | `rasura-layout` | complete |
 | Font parsing, shaping, injection, subsetting | `rasura-font` | feature-complete; 2 of 4 viewers gating |
 | Edit operations, reflow, stream patching | `rasura-edit` | complete |
-| Flow model, layout and document mode | `rasura-flow` | `docs/flow-model.md` complete: export, frames, layout, emission |
-| Rust facade | `rasura` | §11 surface built |
+| Flow model, layout, document mode and composition | `rasura-flow` | `docs/flow-model.md` complete, plus `compose` |
+| Rust facade | `rasura` | §11 surface built, `create` included |
 | WASM surface | `rasura-wasm` | builds, driven from node |
 | Worker protocol and npm package | `js/` | `npm i rasura` works |
+| Documentation site and editor | `web/` | React, Vite, deployed to Pages |
 
 All eight delivery phases are complete except one item that cannot be started
 (§12.1's threaded build; see §7 below). 62,834 lines of Rust across 115 files;
 2,612 lines of JavaScript and TypeScript across 12.
+
+**Composition landed after the phases were written.** The specification has
+carried `static create(opts?: CreateOptions)` since version 1.0 and nothing
+implemented it, because until recently nothing could: `rasura_cos::Document` had
+no constructor, an empty page tree could not be given a first page, and no code
+in the workspace could write a `/FontFile2` for a typeface a document had never
+seen. All three are now closed, and the library makes documents as well as
+editing them.
 
 ### What the library can do
 
@@ -43,6 +57,16 @@ document draws. Supply a font the document lacks and have the glyph injected
 into its own embedded font. Undo any of it exactly. Save incrementally, leaving
 the untouched bytes byte-identical.
 
+And **make one that did not exist**: describe the content as blocks, name a
+typeface, and the layout engine decides the measure, the leading, the pagination
+and the position of every line. The typeface is embedded and subset to the
+characters actually used — 515 KB of Roboto becomes a 14.5 KB subset for two
+dozen glyphs — as a simple `/TrueType` font when every character has a WinAnsi
+code and a `/Type0` with `/Identity-H` when one does not, chosen from the text
+rather than asked of the caller. A composed document is an ordinary one: it
+reads back through the same reader, edits through the same session, and saves
+through the same writer.
+
 ### Which of it the API actually exposes
 
 Nearly all of it, on all three layers. This was the sharpest gap in the project
@@ -53,9 +77,12 @@ each entry has a reason, not a backlog position.
 |---|---|---|---|
 | Text: replace, insert, delete | yes | yes | yes |
 | Images: move, scale, delete | yes | yes | yes |
+| Images: **add** | yes | — | — |
 | Images: replace pixels | yes | — | — |
 | Pages: delete, reorder | yes | yes | yes |
 | Pages: insert | yes | — | — |
+| **Composition: document from nothing** | `rasura-flow` | yes | yes |
+| **Font embedding, subset, simple or Type0** | `rasura-font` | via `create` | via `create` |
 | Annotations: create, list, delete | yes | yes | yes |
 | Form fields: read, fill, flatten | yes | yes | yes |
 | Table cells | yes | yes | yes |
@@ -69,13 +96,20 @@ and a text edit staged together come off in reverse order and leave the file
 byte-identical. `js/test/catalogue.test.mjs` checks exactly that, through a real
 Worker, against bytes read back from `commit()`.
 
-Three rows are `—` on purpose rather than pending:
+Four rows are `—`, and the reasons now differ from each other:
 
 - **Image pixel replacement** needs a codec to re-encode with, which §4.2's
   no-vendored-C++ rule makes a real decision rather than a small one.
-- **`insert_page`** needs the draw emitter reachable from JS to be worth
-  anything: a caller can insert a blank page today and has no way to put
-  content on it.
+- **Adding an image** is new and not yet lifted to the facade. It allocates the
+  XObject, registers it under a name nothing else uses, and **appends** a
+  content stream rather than editing the existing one — so every object already
+  in the file keeps its bytes, which is §2's first property holding for an
+  operation that could easily have broken it. Inherited `/Resources` are copied
+  rather than shadowed; writing a fresh dictionary holding only the image would
+  have taken every font on the page with it.
+- **`insert_page`** is no longer blocked on the draw emitter — composition draws
+  pages now — but is still not lifted, because a caller wanting a page with
+  content on it should reach for `create` rather than assemble one by hand.
 - **Arbitrary object writes** stay off the JS surface deliberately. §11.1's
   second principle is that no PDF concepts leak by default; `document.raw` is
   the escape hatch in Rust, and a JS caller who needs one is better served by
@@ -93,7 +127,8 @@ dependent on which target the crate happened to be compiled for.
 
 No rendering (a draw-command emitter exists; it is not a renderer). No OCR. No
 XFA. No digital signature creation. No image resampling. No structural table
-editing. Details and reasons in §5 and §6.
+editing. No CFF font embedding, and no composed document in more than one face.
+Details and reasons in §5 and §6.
 
 ---
 
@@ -192,6 +227,9 @@ purpose.
 | 8.1–8.2 Parsing all five containers | ● | Type1, TrueType, CFF, CID CFF, OpenType |
 | 8.3 Shaping | ● | rustybuzz; script and direction derived from run content |
 | 8.4 Glyph injection | ● | validated against Roboto by pdfium and pdf.js |
+| 8.4 **Embedding a font the document never had** | ● | `rasura_font::create`; `/FontFile2`, descriptor and `/Widths` synthesised from the program. Simple or `/Type0`, chosen from the text |
+| 8.4 **`/FontDescriptor` from the font program** | ● | `rasura_font::describe`; `head`, `post`, `hhea`, `OS/2`, `name`. Nothing here was read anywhere in the workspace before |
+| 8.4 CFF embedding | ○ | a different stream and subsetter; declined by name rather than mislabelled |
 | 8.5 Font matching for substitution | ◐ | the matcher exists; not wired to editing |
 | 8.6 Sparse-preserving subsetting | ● | the default, and what injection already does |
 | 8.6 Compaction subsetting | ● | Roboto 515 KB → 12.8 KB, pixel-identical |
@@ -213,6 +251,8 @@ purpose.
 | 12.5 Annotations read into the model | ● | `rasura-layout::annots`, with `/V` inherited up the field tree |
 | 7.8 Frame inference | ● | `rasura_layout::frames`; 99.6% containment, median tightness 1.01 over 628 corpus files |
 | Document mode: layout engine and PDF emission | ● | `rasura_flow::layout` and `::emit`; I8 holds through a written, re-opened file |
+| 9.2 **Composition from nothing** | ● | `rasura_flow::compose`, `Document::create`, `Pdf.create`. Page geometry, columns, pagination, keep-with-next |
+| 9.2 Composition: tables, lists, figures | ◐ | placed as their text; counted in `approximated` rather than dropped |
 | 9.2 `set_style`, `insert_paragraph`, `set_z_order` | ○ | |
 | 9.3 Greedy line breaking | ● | the default, and a fidelity decision |
 | 9.3 Knuth–Plass | ● | opt-in; no hyphenation |
@@ -231,6 +271,7 @@ purpose.
 | 10.2 Optional content | ● | layers, `/OCMD` policies, `/VE` expressions; never flattened |
 | 10.3 Metadata, both surfaces | ● | disagreements exposed rather than resolved |
 | 10.4 Images | ● | except `resample_image` |
+| 10.4 **Adding an image** | ● | `rasura_edit::images`; appends a content stream, so nothing already in the file moves. Not on the facade |
 | 10.4 `resample_image` | ○ | the only piece needing a pixel codec |
 | 10.5 Vector content | ◐ | detected and preserved; no provenance to move a path by |
 | 10.6 Redaction, 7 of 9 steps | ● | invariant I7; verification is a public API |
@@ -249,8 +290,9 @@ purpose.
 | 11.3 `fontRequirements` | ● | measured against the embedded program, not the encoding |
 | 11.3 `registerFont` | ● | injection on demand; `reembedded` rung |
 | 11.4 Fidelity contract, `requireFidelity` | ● | two of four rungs reachable |
-| 11.4 Editing surface beyond text | ◐ | images, pages, annotations, forms, tables, redaction and encryption all reach JS; `insert_page` and image pixel replacement do not |
-| 11.5 Coded errors, never bare | ● | all 13 codes; survives the Worker boundary |
+| 11.4 Editing surface beyond text | ◐ | images, pages, annotations, forms, tables, redaction and encryption all reach JS; `insert_page`, `add_image` and image pixel replacement do not |
+| 11 **`create`** | ● | specified since version 1.0, unimplemented until now. `Document::create`, `createDocument`, `Pdf.create` |
+| 11.5 Coded errors, never bare | ● | 14 codes; survives the Worker boundary. The fourteenth, `invalid-argument`, is the only one not in the original list: every other code describes a condition of a *document*, and composition introduced the first operations with no document to describe |
 | 11.6 pdf.js pairing | ● | documented and used by the test harness |
 | 11.6 Draw-command emitter | ◐ | `Canvas` exists in Rust; no JS surface yet |
 | 11.7 Rust facade, synchronous | ● | designed first, per the spec's instruction |
@@ -278,6 +320,7 @@ purpose.
 |---|---|---|
 | 13 Performance budgets | ○ | no benchmarks, no regression gate |
 | 14 Corpus, invariants, fuzzing, cross-viewer | ● | see §4 below |
+| 14 Browser verification | ● | headless Chrome over the DevTools protocol, both routes, before every deploy |
 | 15 Repository layout | ● | |
 | 16 Documentation deliverables | ◐ | this file, `spec-coverage.md`, `flow-model.md`, two Q write-ups, two READMEs; no tutorial or API reference site |
 
@@ -288,8 +331,18 @@ purpose.
 Nothing here is checked only against itself. The escalation, in order of how
 much it proves:
 
-**Unit tests — 1,059.** By crate: cos 129, content 175, layout 216, font 265,
-edit 211, facade 44. Plus 21 JavaScript tests and a TypeScript compilation gate.
+**Unit tests — 1,192.** Plus two TypeScript compilation gates, both green: the
+package's declarations, and the site, held to the same `strict` and no-`any`
+setting because a rule about what the project ships is worth nothing if the site
+documenting it is loose.
+
+**The JavaScript suite is currently not running.** `node --test js/test/` hangs
+before producing any output — not a failure, a hang, which is worse because a
+timeout in CI reads as an infrastructure problem. The library is not implicated:
+`harness/wasm-size/api.mjs` drives the same shipped module through open, read,
+edit, commit, reopen, protect and close, and passes. The fault is in the test
+harness or its Worker transport and it is open. Recorded here rather than
+rounded off, because a suite that is not running is not a suite.
 
 **The corpus — 1,026 files.** Mozilla's pdf.js test suite (974 files, two decades
 of cases kept precisely because they broke something), 20 generated fixtures, 13
@@ -328,6 +381,30 @@ alone:
   Asking the wrong one produces a green tick that means nothing.
 - **qpdf** — `--check` on every generated file, with passwords for the encrypted
   ones.
+
+**Composition is judged by all three, and needs to be.** A font-embedding path
+fails characteristically: it produces a document that passes every structural
+check and renders as blank boxes. So CI composes five documents from nothing —
+two by positioning text directly, three through the layout engine, one of them
+Greek in a `/Type0` font — then has pdf.js build the operator list, which forces
+the embedded program to be parsed and every glyph translated, and has pdfium
+render them. The render check does not trust an exit code: it fails on
+`ink ends at column -1`, because a page that drew nothing renders perfectly
+happily.
+
+**The site is loaded in a real browser before it deploys.** `demo/browser.mjs`
+drives headless Chrome over the DevTools protocol — no puppeteer, no install —
+and checks that the documentation rendered and that the editor compiled the
+module, got a version back from the library, and opened and modelled the sample.
+It also points at the deployed origin, which is the only way to learn whether
+what shipped is what was tested.
+
+This check exists because for a long time nothing here loaded the page at all.
+The module is built with `--omit-default-module-path`, whose entire effect is to
+delete the glue's `import.meta.url` fallback, and the demo called `init()` with
+no argument on the strength of a comment asserting the opposite. It reached
+`WebAssembly.instantiate(undefined, …)` every time, had never started on any
+host since it was written, and passed every check that avoided a browser.
 
 **Fuzzing.** cargo-fuzz targets for the lexer, document open, the filters and the
 cross-reference parser, wired into CI as a 60-second smoke run each. No long
@@ -406,6 +483,53 @@ absorbs the renumbering and no content stream changes.
 
 The ones worth recording, because each was silent.
 
+**The demo had never started.** `--omit-default-module-path` deletes the glue's
+`import.meta.url` fallback and the page called `init()` bare, on the strength of
+a comment claiming the opposite. It reached
+`WebAssembly.instantiate(undefined, …)` on every host since it was written. The
+failure banner then blamed a missing `wasm-unsafe-eval` for *every* cause,
+including that one, so the first person to load the page was sent to look at a
+content-security policy that was never involved. Three checks stood between the
+bug and the deploy and none of them loaded the page.
+
+**The fuzzer found a real one.** `/N` on an object stream is a number the file
+chooses, and both copies of the header parser reserved a `Vec` for it before
+reading anything — so a stream claiming more pairs than the vector can address
+panicked with `capacity overflow` inside the allocator, reachable straight from
+`Document::open`. The loop was already bounded by the header's own length; that
+now sizes the reservation, and the two copies are one. The job was also deleting
+its own evidence: a crash gave a stack of unsymbolised addresses and threw the
+input away with the runner.
+
+**Headings were drawn at body size.** The emitter asked a helper for a block's
+size and the helper ignored both its arguments. So a heading was broken to fit at
+24pt and drawn at 11pt, on a baseline computed for 24 — wrong glyph size, wrong
+position, and short lines that read as a layout bug rather than an emitter one.
+The size is now carried on the placed line, where it was known and thrown away.
+
+**Keep-with-next was wrong three times over**, and each fix improved the rendered
+page and still left a stranded heading. The reservation left out the gap between
+a heading and its section; then it reserved one line while the orphan rule
+refuses to leave fewer than two; then it reserved lines at all, when a block is
+only split if it starts at the top of a frame and otherwise moves whole. None of
+the three had a test, because each needs a particular arrangement to show. The
+regression test now sweeps 1,200 frame heights and derives the unsatisfiable
+threshold from the same function the engine calls — I computed it by hand twice
+and got it wrong twice.
+
+**A float comparison cost a line per column.** `cursor.y` is a running sum of
+line heights, so a line needing 13.2 points was offered 13.199999999999989 and
+pushed to the next column over one part in 10^15.
+
+**Ink was themed; paper was not.** The editor's canvas drew text in the theme's
+foreground onto a permanently white sheet, so dark mode rendered near-white text
+on white paper — unreadable, while every control around it looked correct.
+
+**The site was served where it was not built to live.** The browser check mounted
+`web/dist` at `/` while the build set `base=/rasura/` for Pages, so every asset
+404'd. That one is the check working: it is precisely the deploy it exists to
+prevent, and it found it before anyone saw it.
+
 **`/Widths` is indexed by code, not by order of appearance.** "Hamburg" occupies
 codes 72, 97, 98, 103, 109, 114, 117 — seven letters across forty-six codes.
 Writing seven widths from `/FirstChar 72` piled the letters on top of each other.
@@ -467,9 +591,14 @@ suppressed.
 
 | | Where | Note |
 |---|---|---|
-| Document mode on the facade and in JS | `docs/flow-model.md` | Built in `rasura-flow` behind `accept_regeneration`; not exposed above it. Deliberate: it is the one operation where §2's first property cannot hold, and it should stay hard to reach by accident. |
-| `insert_page` on the facade and in JS | §11.4 | The operation exists; a page you cannot draw on is not worth exposing. Blocked behind the draw emitter reaching JS. |
+| Document mode on the facade and in JS | `docs/flow-model.md` | Built in `rasura-flow` behind `accept_regeneration`; not exposed above it. Deliberate: it is the one operation where §2's first property cannot hold, and it should stay hard to reach by accident. **Composition is the other side of the same code and *is* exposed** — because a document that did not exist has no prior bytes to preserve, so there is nothing to break. |
+| `add_image` on the facade and in JS | §10.4 | Built in `rasura-edit`; not lifted yet. |
+| `insert_page` on the facade and in JS | §11.4 | No longer blocked — composition draws pages — but a caller wanting a page with content should reach for `create`. |
 | `replace_image` pixels | §10.4 | Needs a codec to re-encode with — see `resample_image` below. |
+| Composition: tables, lists, images | §9.2 | Placed as their text, without rules, bullets or pictures. Counted in `Composition.approximated` rather than dropped silently. |
+| Composition: more than one face | §9.2 | One embedded font per document. Bold and italic in a composed document need a second and third, and the `Measurer` ignores the flags rather than faking them. |
+| `standalone.html` | — | The single-file inlined artefact did not survive the move to Vite. Recoverable with `vite-plugin-singlefile`. |
+| Editor: thumbnails, image drag, font supply | — | The library calls exist and are on the WASM surface; the controls are not wired in the React port. |
 | Performance budgets and regression gate | §13 | No benchmarks exist. The largest gap in *verification*. |
 | Lazy chunk splitting | §12.3 | One chunk today. `fonts` should load on the first shaping edit. |
 | Threaded build | §12.1 | **Blocked, not pending.** It is a second artefact with `SharedArrayBuffer`; the single-threaded package had to exist first. Now it can be started. |
@@ -480,7 +609,7 @@ suppressed.
 | Vector path provenance | §10.5 | Nothing to move a path *by*. |
 | Draw-command emitter's JS surface | §11.6 | Exists in Rust. |
 | LRU cap on the page cache | §12.5 | For thousand-page documents. |
-| Tutorial and API reference site | §16 | |
+| ~~Tutorial and API reference site~~ | §16 | **Done.** `web/`, deployed to Pages. |
 
 ### Honest caveats
 
@@ -497,8 +626,28 @@ suppressed.
   no maintained pure-Rust replacement, and the alternative is HarfBuzz, which
   §4.2 forbids. Both forbid `unsafe`, and the font layer is fuzzed, so a
   malformed font can panic a worker but not corrupt memory.
+- **The JavaScript suite hangs and is therefore unverified.** See §4. `Pdf.create`
+  went in without its tests running, which is exactly the situation the rest of
+  this document argues against, and it is the first thing to fix.
 - **Nothing is published.** Not on crates.io, not on npm. The package installs
   from a local tarball and works; it has never been through a registry.
+- **`/StemV` is estimated for every embedded font, and always will be.** No sfnt
+  table records it — Type 1 carried it, TrueType never did. It is derived from
+  `OS/2.usWeightClass` and `stem_v_guessed` says so on every result, which is the
+  same rule the fidelity ladder follows. A `/FontBBox` of zero is likewise
+  corrected from the vertical metrics rather than passed through, because viewers
+  that clip to it would draw nothing, and `bbox_estimated` reports that too.
+- **CFF outlines cannot be embedded.** A `/FontFile3` with an OpenType subtype is
+  a different stream and a different subsetter. Declined by name rather than
+  written into a `/FontFile2`, which would pass every structural check and render
+  nothing.
+- **The composed page is checked for having ink, not for being right.** pdfium
+  says the glyphs drew and pdf.js says the text reads; neither says the
+  typesetting is good. The three keep-with-next bugs in §7 were all found by
+  looking at a rendered page, and the suite was green after every one of them.
+- **The editor's canvas is checked for happening, not for looking right.**
+  Pointer handling, dragging and the editing gestures are not driven by any
+  check, and Chrome is not Safari.
 
 ---
 
@@ -522,7 +671,7 @@ Q2 through Q5 have not been measured.
 ## 10. Reproducing all of it
 
 ```bash
-# Rust: 1,059 tests
+# Rust: 1,192 tests
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo deny check
@@ -537,13 +686,26 @@ cargo run --release -p rasura-contentwalk
 cargo install wasm-bindgen-cli --locked
 npm i -g wasm-opt
 ./crates/rasura-wasm/build.sh     # builds, measures, drives it from node
-cd js && npm install && npm test      # 21 tests + tsc --noEmit
+cd js && npm install && npm test      # 41 tests + tsc --noEmit
+
+# Composition, from no input file at all
+cargo run -p rasura-edit --example compose  -- target/compose   # a page, a font, text
+cargo run -p rasura-flow --example compose  -- target/composed  # a flow model
 
 # Judged by outsiders
 ./harness/pixeldiff/fetch.sh          # pdfium, test-only
 cargo run -p rasura-edit --example redact -- target/redact
 cargo run --release -p rasura-pixeldiff -- \
     target/redact/before.pdf target/redact/after.pdf --changed-within 420 580
+node harness/textdiff/validate-injected.mjs target/composed/greek.pdf \
+    "Ελληνικά Δεν υπάρχει…"            # pdf.js builds the Type0 font
+
+# The site, and the only check that proves it runs
+mkdir -p web/public/wasm
+cp target/pkg/web/rasura_wasm.* web/public/wasm/ && cp demo/sample.pdf web/public/
+npm --prefix web ci && npm --prefix web run build
+node demo/browser.mjs                 # headless Chrome, both routes
+RASURA_DEMO_ORIGIN=https://myketheguru.github.io/rasura node demo/browser.mjs
 ```
 
 ---
@@ -557,6 +719,17 @@ cargo run --release -p rasura-pixeldiff -- \
 | WASM, brotli | 283.3 KB |
 | npm tarball | 386.5 KB |
 | npm unpacked | 950.5 KB |
+| Site JS, gzipped | 153.9 KB — React, Radix, the router and both pages |
+| Site CSS, gzipped | 6.8 KB |
+
+The site's JavaScript is not counted against §12.3's budget and should not be:
+the budget is about what a *caller* ships when they install the package, and none
+of React reaches them. The module the site loads is the same 419 KB artefact the
+gate measures.
+
+A subset is worth its own line, because it is the number that decides whether
+composition is usable: **515 KB of Roboto becomes a 14.5 KB `/FontFile2` for the
+24 glyphs a short document draws.**
 
 The size probes measure the *floor* — what the layers cost with no API on top —
 and the shipped artefact is measured separately, because the budget is about the
