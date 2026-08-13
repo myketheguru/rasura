@@ -2,6 +2,11 @@
 **/*.rs.bk
 node_modules/
 package-lock.json
+# The site's lockfile is the exception, and has to be: `npm ci` refuses to run
+# without one, and a build that resolved its own dependency versions would
+# deploy something nobody had tested. The rule above is right for `js/`, whose
+# dependencies are dev-only and whose package is published from source.
+!/web/package-lock.json
 dist/
 *.wasm
 .DS_Store
