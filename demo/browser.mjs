@@ -86,10 +86,18 @@ const TYPES = {
   '.pdf': 'application/pdf',
 };
 
+// The site is built with a base path, because Pages serves it from a
+// subdirectory. Serving it at `/` instead would 404 every asset — which is what
+// happened, and is exactly the deploy this check exists to prevent, so the
+// server mounts it where the build says it lives rather than papering over it.
+const BASE = (process.env.RASURA_BASE ?? '/').replace(/^\/*/, '/').replace(/\/*$/, '/');
+
 const server = ORIGIN
   ? null
   : createServer((req, res) => {
-      const rel = normalize(decodeURIComponent(req.url.split('?')[0])).replace(/^[/\\]+/, '');
+      let url = decodeURIComponent(req.url.split('?')[0]);
+      if (BASE !== '/' && url.startsWith(BASE)) url = url.slice(BASE.length - 1);
+      const rel = normalize(url).replace(/^[/\\]+/, '');
       const path = join(DIST, rel === '' ? 'index.html' : rel);
       if (!path.startsWith(normalize(DIST)) || !existsSync(path)) {
         res.writeHead(404).end('not found');
@@ -99,8 +107,8 @@ const server = ORIGIN
       res.end(readFileSync(path));
     });
 if (server) await new Promise((r) => server.listen(0, '127.0.0.1', r));
-const base = ORIGIN ?? `http://127.0.0.1:${server.address().port}`;
-console.log(`serving from ${base}`);
+const base = ORIGIN ?? `http://127.0.0.1:${server.address().port}${BASE.slice(0, -1)}`;
+console.log(`serving from ${base}/`);
 
 // --- the browser -------------------------------------------------------------
 

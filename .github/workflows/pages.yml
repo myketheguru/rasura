@@ -98,6 +98,10 @@ jobs:
         run: node demo/browser.mjs
         env:
           RASURA_DIST: web/dist
+          # The same base the build used, so the check serves the site where
+          # Pages will. Serving it at / instead 404s every asset -- which is
+          # the deploy this step exists to prevent, and is how it found out.
+          RASURA_BASE: /rasura/
 
       - uses: actions/upload-pages-artifact@v3
         with:
