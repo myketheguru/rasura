@@ -373,6 +373,14 @@ jobs:
           node harness/textdiff/validate-injected.mjs target/compose/composite.pdf \
             "Ελληνικά and Englishin one Type0 font,addressed by glyph id."
 
+      # And the same thing one layer up, where the caller describes a document
+      # rather than positioning text: headings, prose, pagination and columns
+      # decided by the layout engine. The example checks its own output — every
+      # page non-blank, the page count matching what was reported — and pdfium
+      # below says the glyphs are really there.
+      - name: Compose from a flow model
+        run: cargo run --release -p rasura-flow --example compose -- target/composed
+
       # `--identical` against itself is deliberate: the assertion being made is
       # not that two files match but that pdfium can render this one at all, and
       # the harness reports where the ink ends. A font that embedded wrongly
@@ -380,15 +388,20 @@ jobs:
       - name: pdfium renders what was composed
         run: |
           set -eu
-          for f in simple composite; do
-            cargo run --release -p rasura-pixeldiff -- \
-              "target/compose/$f.pdf" "target/compose/$f.pdf" --identical \
-              --artefacts "target/compose/render-$f" | tee "target/compose/$f.txt"
+          check() {
+            cargo run --release -p rasura-pixeldiff -- "$1" "$1" --identical \
+              --artefacts "$2" | tee "$2.txt"
             # "original ink ends at column -1" is an empty page.
-            if grep -q 'ink ends at column -1' "target/compose/$f.txt"; then
-              echo "::error::$f.pdf rendered with no ink: the embedded font drew nothing"
+            if grep -q 'ink ends at column -1' "$2.txt"; then
+              echo "::error::$1 rendered with no ink: the embedded font drew nothing"
               exit 1
             fi
+          }
+          for f in simple composite; do
+            check "target/compose/$f.pdf" "target/compose/render-$f"
+          done
+          for f in report columns greek; do
+            check "target/composed/$f.pdf" "target/composed/render-$f"
           done
       # Spec 14.2 I2, the pixel half, which has been "needs the render harness"
       # since Phase 1. A two-page document, a word replaced on page one:

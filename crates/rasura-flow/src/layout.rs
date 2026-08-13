@@ -139,6 +139,25 @@ impl Measurer for Standard14 {
     }
 }
 
+/// Measure with a font that is actually going into the document.
+///
+/// [`Standard14`] answers from the metrics this library ships, which is the
+/// right answer for a document being *re-laid out* in Helvetica and an
+/// approximation for anything else. When a font is being embedded, the widths
+/// are not an approximation at all: `/Widths` is written from the same `hmtx`
+/// this reads, so a line broken here is the width it will draw at, and a
+/// measure that ends on the margin ends on the margin.
+///
+/// Bold and italic are ignored. One embedded font is one face — asking for
+/// bold from a regular font is a request for a face that is not there, and
+/// faking it by widening the measure would make text overflow rather than
+/// admit the gap. A document that needs both embeds both.
+impl Measurer for rasura_font::create::Embedded {
+    fn width(&self, text: &str, style: TextStyle) -> f64 {
+        rasura_font::create::Embedded::width(self, text, style.size)
+    }
+}
+
 /// Where a line of text was put.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlacedLine {
@@ -317,6 +336,63 @@ pub struct Report {
     pub measured_with: &'static str,
 }
 
+/// How much a block may exceed the room left and still be said to fit.
+///
+/// `cursor.y` is a running sum of line heights and block gaps, so by the foot
+/// of a frame it carries the error of a dozen additions of numbers like 13.2
+/// that no binary float represents exactly. A line needing 13.2 points is
+/// offered 13.199999999999989, the comparison says it does not fit, and it is
+/// pushed to the next column over a difference of one part in 10^15.
+///
+/// It shows up as a column one line short of full — and, when the line pushed
+/// out was the one a heading was keeping itself with, as a heading stranded at
+/// the foot of a column with its section overleaf.
+///
+/// A hundredth of a point is 1/7200 of an inch: far below anything that could
+/// be seen, and far above the error that accumulates here.
+const SLACK: f64 = 0.01;
+
+/// How much room a heading has to reserve for what follows it.
+///
+/// Keeping a heading with its section means the heading must not be the last
+/// thing in a frame — so it has to leave room for however much of the next
+/// block the splitter will actually place there, and that is not one line.
+///
+/// Two rules decide it, and reserving less than either of them produces the
+/// exact failure keep-with-next exists to prevent: the heading fits, the
+/// splitter then declines to place any of the next block, and the heading is
+/// stranded at the foot of the column with its section overleaf.
+///
+/// **the whole of it**, because of the policy a few lines below this one: a
+/// block is split only when it starts at the top of a frame, and otherwise it
+/// moves whole to the next one. So a heading that reserved room for two lines
+/// of a six-line paragraph got exactly what it asked for and no paragraph —
+/// the six lines did not fit, the block moved entire, and the heading was left
+/// behind. Reserving the orphan minimum is right for an engine that splits
+/// mid-frame and wrong for this one.
+///
+/// When the next block is taller than a frame can hold after the heading, the
+/// two cannot be kept together at all: wherever the heading goes, the paragraph
+/// starts below it, does not fit, and moves. The reservation is returned anyway
+/// — the caller's `available < frame.height()` guard stops it advancing for
+/// ever, and the heading lands with its section on the next frame instead.
+fn following(
+    flow: &FlowDocument,
+    index: usize,
+    measure: f64,
+    opts: &Options,
+    measurer: &impl Measurer,
+) -> f64 {
+    let Some(next) = flow.blocks.get(index + 1) else { return 0.0 };
+    let style = style_for(next, opts);
+    let lines = break_lines(&next.text(), measure, style, measurer).len();
+    if lines == 0 {
+        // A figure or drawing has no lines and takes its reserved height.
+        return if splittable(next) { 0.0 } else { opts.figure_height };
+    }
+    lines as f64 * measurer.line_height(style)
+}
+
 /// Lay a flow document out into a frame set.
 pub fn layout(
     flow: &FlowDocument,
@@ -380,15 +456,20 @@ pub fn layout(
 
         // A heading is kept with what follows by refusing to be the last thing
         // in a frame: it needs room for itself and one line of the next block.
+        //
+        // And for the gap between them. Leaving `block_gap` out of this sum is
+        // not a rounding matter — it is exactly the band in which the heading
+        // fits and the line it was reserving room for does not, so the check
+        // passes and then puts the heading alone at the foot of the column,
+        // which is the one outcome it exists to prevent. Visible in a composed
+        // two-column report as a "Section 1" with its section overleaf.
         let mut needed = lines.len() as f64 * line_height;
         if opts.keep_heading_with_next && matches!(block, Block::Heading { .. }) {
-            let next_style =
-                flow.blocks.get(index + 1).map(|b| style_for(b, opts)).unwrap_or(opts.body);
-            needed += measurer.line_height(next_style);
+            needed += opts.block_gap + following(flow, index, measure, opts, measurer);
         }
 
         let available = page_frames[cursor.frame].rect.y1 - cursor.y;
-        if needed > available && available < page_frames[cursor.frame].rect.height() {
+        if needed > available + SLACK && available < page_frames[cursor.frame].rect.height() {
             // It does not fit here and would fit in an empty frame: move.
             if matches!(block, Block::Heading { .. }) {
                 report.kept_together += 1;
@@ -398,7 +479,7 @@ pub fn layout(
         }
 
         // Split it. `fit` is how many lines go here; the rest carries over.
-        let room = ((page_frames[cursor.frame].rect.y1 - cursor.y) / line_height).floor();
+        let room = ((page_frames[cursor.frame].rect.y1 - cursor.y + SLACK) / line_height).floor();
         let mut fit = (room.max(0.0) as usize).min(lines.len());
 
         // Widow and orphan control. Leaving fewer than `orphans` lines behind,
@@ -538,7 +619,7 @@ fn place_continuation(
         if lines.is_empty() {
             return;
         }
-        let room = ((frame.y1 - cursor.y) / line_height).floor().max(0.0) as usize;
+        let room = ((frame.y1 - cursor.y + SLACK) / line_height).floor().max(0.0) as usize;
         let fit = room.min(lines.len()).max(1);
 
         let placed = lines[..fit].to_vec();
@@ -795,6 +876,58 @@ mod tests {
             "the heading travels with its section"
         );
         assert!(report.kept_together > 0);
+    }
+
+    #[test]
+    fn a_heading_is_kept_with_its_section_at_every_frame_height() {
+        // The test above picks one frame height and passes at it. The bug this
+        // exists for lived in a *band*: the reservation counted the heading and
+        // one line of the next block but not the gap between them, so for a
+        // frame with between those two heights of room left, the heading fitted
+        // and the line it was reserving room for did not.
+        //
+        // Sweeping the height finds that band without my having to compute
+        // where it is -- which is the arithmetic that was wrong in the first
+        // place, so deriving the fixture from it would reproduce the mistake.
+        // The body is several lines long on purpose. With a one-line paragraph
+        // following the heading the orphan rule never fires, and the reservation
+        // being one line short of what that rule demands cannot show.
+        let body = "The body of the section, long enough to break into several lines at \
+                    this measure, because a following paragraph of a single line never \
+                    meets the orphan rule and so never exposes a reservation that is one \
+                    line short of it.";
+        // Below some height the constraint is unsatisfiable: every frame is the
+        // same size, so a heading that will not fit with its section here will
+        // not fit with it anywhere, and the engine places it and counts it
+        // overfull — the right answer to an impossible request.
+        //
+        // That threshold is *derived* rather than written down. I computed it by
+        // hand twice and got it wrong twice, because it depends on whether the
+        // following block can be split at all, which depends on the orphan and
+        // widow settings. Asking the same function the engine asks is the only
+        // version that cannot drift from it.
+        for tenths in 200..1400 {
+            let height = tenths as f64 / 10.0;
+            let frame = frames(&[Rect::new(72.0, 72.0, 540.0, 72.0 + height)]);
+            let flow = doc(vec![para("one"), para("two"), heading(3, "A Section"), para(body)]);
+
+            let opts = Options::default();
+            let heading_height = Standard14.line_height(style_for(&flow.blocks[2], &opts));
+            let reserve = following(&flow, 2, 468.0, &opts, &Standard14);
+            if height < heading_height + opts.block_gap + reserve {
+                continue;
+            }
+
+            let (placed, _) = layout(&flow, &frame, &opts, &Standard14);
+            let Some(h) = placed.blocks.iter().find(|b| b.source == 2) else { continue };
+            let Some(body) = placed.blocks.iter().find(|b| b.source == 3) else { continue };
+
+            assert_eq!(
+                (h.page, h.frame),
+                (body.page, body.frame),
+                "at frame height {height}, the heading was left behind by its section",
+            );
+        }
     }
 
     #[test]

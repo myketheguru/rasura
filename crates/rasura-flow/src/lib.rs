@@ -60,6 +60,7 @@
 
 pub mod build;
 pub mod compare;
+pub mod compose;
 pub mod emit;
 pub mod flow;
 pub mod layout;

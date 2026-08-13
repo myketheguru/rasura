@@ -218,6 +218,18 @@ impl Document {
         doc
     }
 
+    /// Point the trailer's `/Info` at a document information dictionary.
+    ///
+    /// Narrow on purpose. The trailer also carries `/Root`, `/Encrypt`, `/Size`
+    /// and `/ID`, and every one of them is an invariant this crate maintains —
+    /// `/Root` is what the writer walks reachability from, `/Encrypt` is what
+    /// the protection path owns, and both are wired up where they are decided
+    /// rather than left for a caller to set. A general `trailer_mut` would make
+    /// all four settable to get at the one that is safe.
+    pub fn set_info(&mut self, info: ObjId) {
+        self.xref.trailer.insert("Info", Object::Reference(info));
+    }
+
     pub fn open(bytes: Vec<u8>) -> Result<Document> {
         Document::open_with(bytes, &OpenOptions::default())
     }

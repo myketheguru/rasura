@@ -67,6 +67,13 @@ pub enum Evidence {
     /// No text to measure, so the page box stands in. Always true and never
     /// tight.
     PageBox,
+    /// Not inferred at all: the caller said where the text goes.
+    ///
+    /// Composition rather than analysis. There is no document to measure — the
+    /// frame is a decision, not a finding — and calling that `Pages(1)` would
+    /// put a designed page and a one-page sample in the same bucket when they
+    /// mean opposite things about how much to trust the number.
+    Designed,
 }
 
 impl Evidence {
@@ -75,6 +82,7 @@ impl Evidence {
             Evidence::Pages(_) => "repeated across pages",
             Evidence::SinglePage => "one page only",
             Evidence::PageBox => "the page box, for want of any text",
+            Evidence::Designed => "specified by the caller",
         }
     }
 }
@@ -110,12 +118,120 @@ pub struct FrameSet {
     pub groups: Vec<PageGroup>,
 }
 
+/// A page to be composed, rather than one to be measured.
+///
+/// The inference in this module answers "where does the text on this document's
+/// pages actually sit". Composition asks the opposite question — "where should
+/// text go on a page I am about to make" — and there is nothing to infer from,
+/// so it is stated.
+///
+/// Points throughout, as everything in PDF is: 72 to the inch.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PageGeometry {
+    /// Width and height of the page box.
+    pub size: (f64, f64),
+    /// Top, right, bottom, left — clockwise from the top, as in CSS, because
+    /// every other ordering has to be looked up every time.
+    pub margins: (f64, f64, f64, f64),
+    /// One or more, left to right.
+    pub columns: usize,
+    /// The space between columns. Ignored for a single column.
+    pub gutter: f64,
+}
+
+impl Default for PageGeometry {
+    fn default() -> PageGeometry {
+        PageGeometry::us_letter()
+    }
+}
+
+impl PageGeometry {
+    /// 612 × 792 points, one inch of margin, one column.
+    pub fn us_letter() -> PageGeometry {
+        PageGeometry {
+            size: (612.0, 792.0),
+            margins: (72.0, 72.0, 72.0, 72.0),
+            columns: 1,
+            gutter: 18.0,
+        }
+    }
+
+    /// 595 × 842 points — A4 — with the same inch of margin.
+    pub fn a4() -> PageGeometry {
+        PageGeometry { size: (595.0, 842.0), ..PageGeometry::us_letter() }
+    }
+
+    /// The same page in `columns` columns.
+    pub fn with_columns(mut self, columns: usize) -> PageGeometry {
+        self.columns = columns.max(1);
+        self
+    }
+
+    /// The same page with every margin set to `points`.
+    pub fn with_margin(mut self, points: f64) -> PageGeometry {
+        self.margins = (points, points, points, points);
+        self
+    }
+
+    /// The text frames this geometry describes, left to right.
+    ///
+    /// In the same downward-y space the layout engine works in: `y0` is the top
+    /// of the frame and `y1` the bottom, which is *not* PDF page space. The
+    /// emitter converts when it computes a baseline, and doing it here as well
+    /// would flip the page twice.
+    pub fn frames(&self) -> Vec<Frame> {
+        let (top, right, bottom, left) = self.margins;
+        let columns = self.columns.max(1);
+
+        // A geometry whose margins exceed the page has no text area at all.
+        // Clamped rather than refused: the caller gets an empty frame and a
+        // layout with nothing placed, which is visible, rather than an error
+        // from a function that only does arithmetic.
+        let measure = (self.size.0 - left - right).max(0.0);
+        let depth = (self.size.1 - top - bottom).max(0.0);
+        let gutter = if columns > 1 { self.gutter } else { 0.0 };
+        let column_width = ((measure - gutter * (columns - 1) as f64) / columns as f64).max(0.0);
+
+        (0..columns)
+            .map(|i| {
+                let x0 = left + i as f64 * (column_width + gutter);
+                Frame {
+                    rect: Rect::new(x0, top, x0 + column_width, top + depth),
+                    column: i,
+                    blocks: 0,
+                    evidence: Evidence::Designed,
+                }
+            })
+            .collect()
+    }
+}
+
 impl FrameSet {
+    /// A frame set for pages that do not exist yet.
+    ///
+    /// One group, applying to every page: a composed document's page count is
+    /// whatever the text turns out to need, so listing pages in advance would
+    /// be inventing a number. [`FrameSet::frames_for`] reads an empty page list
+    /// as "all of them" for exactly this case.
+    pub fn designed(geometry: &PageGeometry) -> FrameSet {
+        FrameSet {
+            groups: vec![PageGroup {
+                pages: Vec::new(),
+                size: geometry.size,
+                frames: geometry.frames(),
+            }],
+        }
+    }
+
     /// The frames that apply to a page.
+    ///
+    /// A group with no pages listed applies to every page — that is what
+    /// [`FrameSet::designed`] produces, and inference never produces it, since
+    /// an inferred group exists because pages were measured into it.
     pub fn frames_for(&self, page: usize) -> &[Frame] {
         self.groups
             .iter()
-            .find(|g| g.pages.contains(&page))
+            .find(|g| g.pages.contains(&page) || g.pages.is_empty())
             .map(|g| g.frames.as_slice())
             .unwrap_or(&[])
     }
