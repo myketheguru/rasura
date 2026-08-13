@@ -1,0 +1,7 @@
+﻿# Built by CI from the sources beside it. Vite writes here.
+dist/
+node_modules/
+# The compiled module and the sample are copied in by the build; they are
+# artefacts of the Rust workspace, not sources of this app.
+public/wasm/
+public/sample.pdf

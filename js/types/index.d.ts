@@ -26,9 +26,56 @@ export type PdfErrorCode =
   | "fidelity-below-required"
   | "signature-would-be-destroyed"
   | "unsupported-filter"
+  | "invalid-argument"
   | "internal";
 
 export const CODES: readonly PdfErrorCode[];
+
+/** A block of a document to be composed. Spec 9.2. */
+export type Content =
+  | { kind: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; text: string }
+  | { kind: "paragraph"; text: string }
+  /** Drawn as its lines, without bullets; counted in `Composition.approximated`. */
+  | { kind: "list"; items: readonly string[] };
+
+export interface CreateOptions extends OpenOptions {
+  /** Defaults to `"letter"`. */
+  pageSize?: "letter" | "a4";
+  /** Every margin, in points. 72 is an inch. */
+  margin?: number;
+  columns?: number;
+  /** Space between columns, in points. Ignored for one column. */
+  gutter?: number;
+  bodySize?: number;
+  /** Sizes for heading levels 1 to 6. Short arrays leave the rest at default. */
+  headingSizes?: readonly number[];
+  /** `/Info /Title`, which is what a viewer shows in its window bar. */
+  title?: string;
+}
+
+/** What composing did, beyond producing the document. */
+export interface Composition {
+  pages: number;
+  lines: number;
+  /** Blocks drawn as plain text because their structure is not drawn. */
+  approximated: number;
+  /**
+   * Characters the typeface has no glyph for. **Dropped, not substituted** —
+   * spec 2's second property. An empty array is the only safe result to ignore.
+   */
+  missing: string[];
+  /** `/BaseFont`, subset tag included. */
+  baseFont: string;
+  /** True when the text needed a Type0 font: anything outside WinAnsi. */
+  composite: boolean;
+  /** `/StemV` cannot be measured from a TrueType file, so it was estimated. */
+  stemVEstimated: boolean;
+}
+
+export interface Composed {
+  document: Document;
+  report: Composition;
+}
 
 /** Spec 11.5: never a bare `Error`. */
 export class PdfError extends Error {
@@ -514,4 +561,17 @@ export class Document {
 
 export class Pdf {
   static open(src: ArrayBuffer | Uint8Array | Blob, opts?: OpenOptions): Promise<Document>;
+
+  /**
+   * Compose a document that did not exist. Spec 11's `create`.
+   *
+   * The typeface is required and is embedded, subset to the characters used.
+   * Returns the document together with what composing approximated ‒ read
+   * `report.missing` before shipping the result.
+   */
+  static create(
+    content: readonly Content[],
+    font: ArrayBuffer | Uint8Array | Blob,
+    opts?: CreateOptions,
+  ): Promise<Composed>;
 }

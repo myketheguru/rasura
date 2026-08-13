@@ -13,6 +13,9 @@ rasura-content.workspace = true
 rasura-layout.workspace = true
 rasura-font.workspace = true
 rasura-edit.workspace = true
+# The layout engine and composition. Spec 11's `create` needs it, and it is the
+# reason the flow stack is no longer unreachable from the shipped SDK.
+rasura-flow.workspace = true
 
 [dev-dependencies]
 # The fixture builder, for the examples and tests only.

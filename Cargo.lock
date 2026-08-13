@@ -581,6 +581,7 @@ dependencies = [
  "rasura-content",
  "rasura-cos",
  "rasura-edit",
+ "rasura-flow",
  "rasura-font",
  "rasura-layout",
 ]

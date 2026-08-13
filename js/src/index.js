@@ -89,6 +89,55 @@ export class Pdf {
     }
     return new Document(transport, handleId, opts);
   }
+
+  /**
+   * Compose a document. Spec 11's `create`.
+   *
+   * Returns the document **and** what composing had to approximate, because
+   * the second half is not optional information: a typeface with no glyph for a
+   * character drops it rather than substituting one, and a caller who never
+   * looks at `missing` ships a document with holes in it.
+   *
+   * The typeface is required. A document set in a font nobody embedded looks
+   * like whatever the reader happens to have installed, which is the one thing
+   * a PDF exists to prevent.
+   *
+   * @param {import("../types/index.d.ts").Content[]} content
+   * @param {ArrayBuffer | Uint8Array | Blob} font
+   * @param {import("../types/index.d.ts").CreateOptions} [opts]
+   * @returns {Promise<import("../types/index.d.ts").Composed>}
+   */
+  static async create(content, font, opts = {}) {
+    const transport = opts.worker === false ? new Inline(opts) : new Channel(opts);
+    await transport.start();
+
+    const bytes = await toBytes(font);
+    if (bytes.byteLength === 0) {
+      await transport.terminate();
+      throw new PdfError("font-unavailable", "composing needs a typeface; none was given");
+    }
+
+    let result;
+    try {
+      // The typeface is **not** transferred, unlike a document's bytes in
+      // `open`. A document is the caller's own file and may be twenty megabytes;
+      // a typeface is a few hundred kilobytes and is very often the same one for
+      // the next document, so detaching it would break the obvious loop.
+      result = await transport.request("create", [content, bytes, opts], []);
+    } catch (e) {
+      await transport.terminate();
+      throw e;
+    }
+
+    const { handle, missing, ...rest } = result;
+    return {
+      document: new Document(transport, handle, opts),
+      // A string across the boundary, an array of characters here: JS strings
+      // index by UTF-16 code unit, and a missing astral character would come
+      // back as two meaningless halves from `missing[0]`.
+      report: { ...rest, missing: [...missing] },
+    };
+  }
 }
 
 /** One open document. Spec 11.2. */

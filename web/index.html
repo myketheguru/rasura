@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Rasura — true PDF editing in the browser</title>
+    <meta
+      name="description"
+      content="A browser-native SDK that reads a PDF as paragraphs and blocks, edits it, and writes it back with the untouched bytes intact. Rust, compiled to WebAssembly."
+    />
+    <script>
+      // Before first paint, or the page flashes light and then corrects itself.
+      // Inline and tiny for the same reason: a deferred module would run after
+      // the first frame, which is exactly when the flash happens.
+      try {
+        var t = localStorage.getItem('rasura-theme')
+        if (t === 'dark' || t === 'light') document.documentElement.classList.add(t)
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

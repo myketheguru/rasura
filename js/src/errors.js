@@ -18,6 +18,7 @@ export const CODES = Object.freeze([
   "fidelity-below-required",
   "signature-would-be-destroyed",
   "unsupported-filter",
+  "invalid-argument",
   "internal",
 ]);
 

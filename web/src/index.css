@@ -1,0 +1,261 @@
+@import "tailwindcss";
+
+/* Rasura's design tokens.
+ *
+ * shadcn/ui's variable contract, with a palette chosen for this subject rather
+ * than taken from the default. The neutral carries a few degrees of the
+ * accent's hue: a pure grey reads as unconsidered, and the difference is
+ * visible the moment the two are put side by side.
+ *
+ * The accent is a single deep green and it means one thing — the action that
+ * commits. Semantic colours (success, warning, destructive) are separate from
+ * it, so a warning can never be mistaken for a button.
+ */
+
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-success: hsl(var(--success));
+  --color-warning: hsl(var(--warning));
+  --color-info: hsl(var(--info));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Inter, Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo,
+    Consolas, monospace;
+}
+
+:root {
+  --background: 150 20% 99%;
+  --foreground: 165 25% 9%;
+  --card: 0 0% 100%;
+  --card-foreground: 165 25% 9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 165 25% 9%;
+  --primary: 157 71% 33%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 155 14% 94%;
+  --secondary-foreground: 165 25% 9%;
+  --muted: 155 16% 95.5%;
+  --muted-foreground: 160 8% 42%;
+  --accent: 155 20% 94%;
+  --accent-foreground: 165 25% 9%;
+  --destructive: 0 72% 45%;
+  --destructive-foreground: 0 0% 100%;
+  --success: 157 65% 32%;
+  --warning: 32 92% 40%;
+  --info: 214 80% 46%;
+  --border: 155 14% 89%;
+  --input: 155 14% 87%;
+  --ring: 157 71% 33%;
+  --radius: 0.5rem;
+}
+
+/* The viewer's theme has three states: an explicit choice stamps `.dark` on the
+ * root, and "system" stamps nothing. Both have to be overridable, so the media
+ * query is guarded against an explicit light choice and the class wins after. */
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --background: 165 24% 7%;
+    --foreground: 150 12% 93%;
+    --card: 165 20% 9.5%;
+    --card-foreground: 150 12% 93%;
+    --popover: 165 20% 11%;
+    --popover-foreground: 150 12% 93%;
+    --primary: 155 55% 46%;
+    --primary-foreground: 165 30% 6%;
+    --secondary: 165 14% 16%;
+    --secondary-foreground: 150 12% 93%;
+    --muted: 165 14% 15%;
+    --muted-foreground: 155 8% 62%;
+    --accent: 165 16% 17%;
+    --accent-foreground: 150 12% 93%;
+    --destructive: 0 62% 52%;
+    --success: 155 55% 46%;
+    --warning: 38 88% 55%;
+    --info: 213 80% 62%;
+    --border: 165 12% 20%;
+    --input: 165 12% 24%;
+    --ring: 155 55% 46%;
+  }
+}
+
+.dark {
+  --background: 165 24% 7%;
+  --foreground: 150 12% 93%;
+  --card: 165 20% 9.5%;
+  --card-foreground: 150 12% 93%;
+  --popover: 165 20% 11%;
+  --popover-foreground: 150 12% 93%;
+  --primary: 155 55% 46%;
+  --primary-foreground: 165 30% 6%;
+  --secondary: 165 14% 16%;
+  --secondary-foreground: 150 12% 93%;
+  --muted: 165 14% 15%;
+  --muted-foreground: 155 8% 62%;
+  --accent: 165 16% 17%;
+  --accent-foreground: 150 12% 93%;
+  --destructive: 0 62% 52%;
+  --success: 155 55% 46%;
+  --warning: 38 88% 55%;
+  --info: 213 80% 62%;
+  --border: 165 12% 20%;
+  --input: 165 12% 24%;
+  --ring: 155 55% 46%;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    scroll-padding-top: 5rem;
+  }
+
+  body {
+    /* Painted explicitly: a transparent body borrows whatever ground the host
+     * paints behind the page, which in dark mode is the wrong one. */
+    @apply bg-background text-foreground font-sans antialiased;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / 0.22);
+  }
+
+  /* One focus treatment, keyboard only. */
+  :focus-visible {
+    @apply outline-ring outline-2 outline-offset-2;
+  }
+
+  /* Thin scrollbars that use the theme, rather than the platform's. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.5);
+    background-clip: content-box;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* --- prose ----------------------------------------------------------------
+ *
+ * The documentation's reading column. Written out rather than pulled from a
+ * typography plugin because the sizes here are chosen against this measure and
+ * this palette, and a plugin's defaults would need overriding at every step.
+ */
+.prose {
+  max-width: 46rem;
+  color: hsl(var(--foreground));
+}
+
+.prose h2 {
+  margin-top: 3rem;
+  margin-bottom: 0.75rem;
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  scroll-margin-top: 5rem;
+}
+
+.prose h3 {
+  margin-top: 2rem;
+  margin-bottom: 0.5rem;
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  scroll-margin-top: 5rem;
+}
+
+.prose p {
+  margin: 0.9rem 0;
+  line-height: 1.72;
+}
+
+.prose ul,
+.prose ol {
+  margin: 0.9rem 0;
+  padding-left: 1.25rem;
+  line-height: 1.72;
+}
+
+.prose li {
+  margin: 0.3rem 0;
+}
+
+.prose li::marker {
+  color: hsl(var(--muted-foreground));
+}
+
+.prose a {
+  color: hsl(var(--primary));
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+
+.prose strong {
+  font-weight: 600;
+}
+
+.prose :not(pre) > code {
+  padding: 0.12em 0.36em;
+  border-radius: var(--radius-sm);
+  background: hsl(var(--muted));
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  overflow-wrap: anywhere;
+}
+
+.prose blockquote {
+  margin: 1.25rem 0;
+  padding: 0.1rem 0 0.1rem 1rem;
+  border-left: 2px solid hsl(var(--primary) / 0.4);
+  color: hsl(var(--muted-foreground));
+}

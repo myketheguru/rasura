@@ -158,6 +158,42 @@ pub fn open_document(
     Ok(OPEN.with(|r| r.borrow_mut().insert(doc)))
 }
 
+/// Compose a document. Spec 11's `create`, unimplemented until now.
+///
+/// `content` is an array of `{ kind, text }` — or `{ kind: "list", items }` —
+/// rather than a typed enum, because a `JsValue` is what crosses and inventing
+/// a class for three shapes would put a constructor on the JS side that has to
+/// stay in step with this one.
+///
+/// The typeface is required and is passed as bytes. There is no default: a
+/// document set in a font nobody embedded looks like whatever the reader has
+/// installed, which is the one thing a PDF is supposed to prevent. Returns the
+/// handle and what composing had to approximate.
+#[wasm_bindgen(js_name = createDocument)]
+pub fn create_document(
+    content: JsValue,
+    font: Vec<u8>,
+    options: JsValue,
+) -> Result<JsValue, JsValue> {
+    let blocks = convert::to_content(&content)?;
+    let opts = convert::to_create_options(&options, font)?;
+    let (doc, report) = Document::create(&blocks, &opts).map_err(convert::from_error)?;
+
+    let out = obj();
+    set_num(&out, "handle", f64::from(OPEN.with(|r| r.borrow_mut().insert(doc))));
+    set_num(&out, "pages", report.pages as f64);
+    set_num(&out, "lines", report.lines as f64);
+    set_num(&out, "approximated", report.approximated as f64);
+    set_str(&out, "baseFont", &report.base_font);
+    set(&out, "composite", &JsValue::from_bool(report.composite));
+    set(&out, "stemVEstimated", &JsValue::from_bool(report.stem_v_estimated));
+    // The characters the typeface could not draw, as a string. They were
+    // dropped, not substituted, and a caller who does not look at this will
+    // ship a document with holes in it.
+    set_str(&out, "missing", &report.missing.iter().collect::<String>());
+    Ok(out.into())
+}
+
 /// Release a document's memory. Spec 12.5.
 ///
 /// Returns whether there was anything to close, so a double close is visible to

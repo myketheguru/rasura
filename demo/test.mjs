@@ -12,7 +12,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 
-import { drawList, layoutParagraph, minimalRange, paragraphAt, pageBox } from './render.mjs';
+import { drawList, layoutParagraph, minimalRange, paragraphAt, pageBox } from '../web/src/editor/model.ts';
 
 const dir = process.argv[2] ?? 'target/pkg/nodejs';
 const entry = `${dir}/rasura_wasm.js`;

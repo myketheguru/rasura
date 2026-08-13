@@ -299,6 +299,101 @@ fn points(source: &JsValue, key: &str) -> Vec<(f64, f64)> {
     out
 }
 
+/// `[{ kind: "heading", level, text } | { kind: "paragraph", text } |
+/// { kind: "list", items }]` to the content list `create` takes.
+///
+/// An unknown `kind` is refused by name rather than skipped. Dropping a block
+/// nobody recognised would compose a document quietly missing a section, and
+/// the caller would find out by reading it.
+pub fn to_content(source: &JsValue) -> Result<Vec<rasura::create::Content>, JsValue> {
+    use rasura::create::Content;
+
+    let array = source
+        .clone()
+        .dyn_into::<Array>()
+        .map_err(|_| err(Code::InvalidArgument.as_str(), "content must be an array of blocks"))?;
+
+    let mut out = Vec::with_capacity(array.length() as usize);
+    for (i, item) in array.iter().enumerate() {
+        let kind = opt_str(&item, "kind").unwrap_or_default();
+        let text = opt_str(&item, "text").unwrap_or_default();
+        out.push(match kind.as_str() {
+            "heading" => Content::Heading {
+                // Clamped rather than refused: a level of 0 or 9 is a caller
+                // counting from the wrong end, not a document that cannot be
+                // made, and the nearest real level is what they meant.
+                level: (num_or(&item, "level", 1.0).clamp(1.0, 6.0)) as u8,
+                text,
+            },
+            "paragraph" => Content::Paragraph { text },
+            "list" => Content::List {
+                items: get(&item, "items")
+                    .dyn_into::<Array>()
+                    .map(|a| a.iter().filter_map(|v| v.as_string()).collect())
+                    .unwrap_or_default(),
+            },
+            other => {
+                return Err(err(
+                    Code::InvalidArgument.as_str(),
+                    &format!("block {i} has unknown kind {other:?}"),
+                ));
+            }
+        });
+    }
+    Ok(out)
+}
+
+/// `{ pageSize, margin, columns, bodySize, headingSizes, title }` to
+/// composition options. Every field is optional but the font, which is a
+/// separate argument because it is bytes rather than a number.
+pub fn to_create_options(
+    source: &JsValue,
+    font: Vec<u8>,
+) -> Result<rasura::create::Options, JsValue> {
+    use rasura::create::{Options, PageGeometry};
+
+    let mut opts = Options::with_font(font);
+    if source.is_undefined() || source.is_null() {
+        return Ok(opts);
+    }
+
+    let mut geometry = match opt_str(source, "pageSize").as_deref() {
+        Some("a4") => PageGeometry::a4(),
+        // Named rather than silently defaulted: a caller who typed "A5" should
+        // learn that it is not offered, not receive Letter and wonder.
+        Some("letter") | None => PageGeometry::us_letter(),
+        Some(other) => {
+            return Err(err(
+                Code::InvalidArgument.as_str(),
+                &format!("unknown pageSize {other:?}; expected \"letter\" or \"a4\""),
+            ));
+        }
+    };
+    if let Some(margin) = opt_num(source, "margin") {
+        geometry = geometry.with_margin(margin);
+    }
+    if let Some(columns) = opt_num(source, "columns") {
+        geometry = geometry.with_columns(columns.max(1.0) as usize);
+    }
+    if let Some(gutter) = opt_num(source, "gutter") {
+        geometry.gutter = gutter;
+    }
+    opts.geometry = geometry;
+
+    if let Some(size) = opt_num(source, "bodySize") {
+        opts.body_size = size;
+    }
+    if let Ok(sizes) = get(source, "headingSizes").dyn_into::<Array>() {
+        for (i, slot) in opts.heading_sizes.iter_mut().enumerate() {
+            if let Some(v) = sizes.get(i as u32).as_f64() {
+                *slot = v;
+            }
+        }
+    }
+    opts.title = opt_str(source, "title");
+    Ok(opts)
+}
+
 pub fn to_rect(source: &JsValue) -> Result<rasura::Rect, JsValue> {
     if source.is_undefined() || source.is_null() {
         return Err(err(Code::Internal.as_str(), "a rect is required: { x0, y0, x1, y1 }"));

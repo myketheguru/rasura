@@ -53,6 +53,7 @@ pub mod emit;
 pub mod encode;
 pub mod flatten;
 pub mod forms;
+pub mod images;
 pub mod locate;
 pub mod numfmt;
 pub mod pages;

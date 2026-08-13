@@ -37,6 +37,16 @@ pub enum Code {
     FidelityBelowRequired,
     SignatureWouldBeDestroyed,
     UnsupportedFilter,
+    /// The caller asked for something that cannot be done as asked — composing
+    /// a document with no content in it, a level outside 1 to 6.
+    ///
+    /// The fourteenth, and the only one not in spec 11.5's original list. Every
+    /// code above it describes a condition of a *document*: it is malformed, it
+    /// is encrypted, its font lacks a glyph. Composition introduced the first
+    /// operations with no document to describe, and reporting "you passed an
+    /// empty list" as `internal` would tell a caller their library is broken
+    /// when their call is.
+    InvalidArgument,
     Internal,
 }
 
@@ -60,6 +70,7 @@ impl Code {
             Code::FidelityBelowRequired => "fidelity-below-required",
             Code::SignatureWouldBeDestroyed => "signature-would-be-destroyed",
             Code::UnsupportedFilter => "unsupported-filter",
+            Code::InvalidArgument => "invalid-argument",
             Code::Internal => "internal",
         }
     }

@@ -30,11 +30,21 @@ import { extname, join, normalize } from 'node:path';
 // was deployed is what was tested.
 const ORIGIN = process.env.RASURA_DEMO_ORIGIN?.replace(/\/+$/, '');
 
-const DIST = 'demo/dist';
+// Which build to serve. `web/dist` is the React site; the variable exists
+// because the same checker has to work against a local build and against a
+// deployed origin, and hard-coding one directory made it a demo-only tool.
+const DIST = process.env.RASURA_DIST ?? 'web/dist';
 if (!ORIGIN && !existsSync(join(DIST, 'index.html'))) {
-  console.error(`missing ${DIST}/index.html -- run node demo/build.mjs first`);
+  console.error(`missing ${DIST}/index.html -- run npm --prefix web run build first`);
   process.exit(1);
 }
+
+// The pages to load. A hash router means the editor is a fragment of the same
+// document, so both are checked from one server.
+const PAGES = [
+  ['docs', ''],
+  ['editor', '#/editor'],
+];
 
 const CHROME = [
   process.env.CHROME_PATH,
@@ -189,15 +199,23 @@ async function load(url) {
     // inlines every source file into a `<script>`, so `outerHTML` contains the
     // *text of the failure banner* whether or not the banner was ever shown —
     // which read as a failure on the one file that was working.
-    const probe = `JSON.stringify({
-      fatal: document.querySelector('.fatal pre') ? document.querySelector('.fatal pre').textContent : null,
-      version: (document.getElementById('version') || {}).textContent || '',
-      pageLabel: (document.getElementById('page-label') || {}).textContent || '',
-      inspector: ((document.getElementById('inspector-body') || {}).textContent || '').trim().length,
-      thumbs: document.querySelectorAll('#thumbs canvas, #thumbs button, #thumbs div').length,
-      result: (document.getElementById('result') || {}).textContent || '',
-      body: document.body ? document.body.innerHTML.length : 0,
-    })`;
+    // Asked of the DOM by test id, not pattern-matched out of a dump: the page
+    // inlines its own sources in some builds, so `outerHTML` contains the text
+    // of an error banner whether or not the banner was ever shown.
+    const probe = `(() => {
+      const t = (id) => { const el = document.querySelector('[data-testid="' + id + '"]'); return el ? el.textContent : ''; };
+      const pre = document.querySelector('pre');
+      const failed = /WebAssembly could not start/.test(document.body ? document.body.textContent : '');
+      return JSON.stringify({
+        fatal: failed && pre ? pre.textContent : null,
+        version: t('version'),
+        pageLabel: t('page-label'),
+        status: t('status'),
+        canvas: document.querySelectorAll('canvas').length,
+        headings: document.querySelectorAll('h1, h2').length,
+        body: document.body ? document.body.innerHTML.length : 0,
+      });
+    })()`;
 
     // The module has to compile *and* the sample has to open, and those are two
     // events. Waiting only for the version -- written between them -- passed
@@ -208,9 +226,13 @@ async function load(url) {
     while (Date.now() < deadline) {
       const r = await send('Runtime.evaluate', { expression: probe, returnByValue: true });
       state = JSON.parse(r.result?.value ?? '{}');
-      const started = /rasura \d+\.\d+\.\d+/.test(state.version);
+      const started = /rasura \d+\.\d+\.\d+/.test(state.version ?? '');
       const opened = state.pageLabel && state.pageLabel.trim() !== '–';
-      if (state.fatal !== null || (started && opened)) break;
+      // The docs route never loads the module, so it settles as soon as its
+      // content is on the page. Waiting for a version it will never show would
+      // spend the whole timeout on a page that was ready immediately.
+      const isDocs = !url.includes('#/editor');
+      if (state.fatal !== null || (isDocs && state.headings >= 5) || (started && opened)) break;
       await new Promise((r2) => setTimeout(r2, 250));
     }
 
@@ -236,43 +258,42 @@ async function load(url) {
   });
 }
 
-for (const [what, url] of [
-  ['index.html', `${base}/`],
-  ['standalone.html', `${base}/standalone.html`],
-]) {
+for (const [what, hash] of PAGES) {
   console.log(`\n${what}`);
-  const { state, problems } = await load(url);
+  const { state, problems } = await load(`${base}/${hash}`);
 
   // First, because every check below is vacuous without it: a page that never
   // rendered matches no failure pattern either.
   check(`${what}: the page rendered`, state.body > 500, `${state.body ?? 0} bytes of body`);
 
-  check(`${what}: WebAssembly started`, state.body > 500 && !state.fatal, state.fatal ?? '');
+  if (what === 'docs') {
+    // The documentation is static: what has to be true is that React mounted
+    // and the content is there, not that any WebAssembly ran.
+    check(`${what}: the content is present`, state.headings >= 5, `${state.headings} heading(s)`);
+  } else {
+    check(`${what}: WebAssembly started`, state.body > 500 && !state.fatal, state.fatal ?? '');
 
-  // Started is not ran. `version()` is the first thing written after init, so
-  // this separates "the module compiled" from "the library answered".
-  check(
-    `${what}: the module answered with its version`,
-    /rasura \d+\.\d+\.\d+/.test(state.version ?? ''),
-    state.version || 'nothing in #version',
-  );
+    // Started is not ran. The version comes from the module itself, so this
+    // separates "the module compiled" from "the library answered".
+    check(
+      `${what}: the module answered with its version`,
+      /rasura \d+\.\d+\.\d+/.test(state.version ?? ''),
+      state.version || 'no version rendered',
+    );
 
-  // And the sample was opened and modelled: the markup ships
-  // `<span id="page-label">–</span>`, and only a successful open replaces it.
-  // The sample has two pages.
-  check(
-    `${what}: the sample opened and reported its pages`,
-    state.pageLabel?.trim() === '1 / 2',
-    // With the status line, because "#page-label is –" says the open did not
-    // finish and nothing about why. The page puts the reason in #result.
-    state.pageLabel
-      ? `#page-label is ${JSON.stringify(state.pageLabel.trim())}, #result is ${JSON.stringify(state.result ?? '')}`
-      : 'nothing in #page-label',
-  );
+    // And the sample was opened and modelled. It has two pages.
+    check(
+      `${what}: the sample opened and reported its pages`,
+      state.pageLabel?.trim() === '1 / 2',
+      state.pageLabel
+        ? `page label is ${JSON.stringify(state.pageLabel.trim())}, status is ${JSON.stringify(state.status ?? '')}`
+        : 'no page label rendered',
+    );
 
-  // The inspector is drawn from documentInfo, so an empty one means the model
-  // never crossed the boundary even though the page count did.
-  check(`${what}: the inspector was filled from the model`, state.inspector > 100, `${state.inspector} characters`);
+    // The page is drawn from the model onto a canvas; no canvas means the model
+    // never crossed the boundary even though the page count did.
+    check(`${what}: the page was drawn`, state.canvas >= 1, `${state.canvas} canvas`);
+  }
 
   check(`${what}: nothing threw and nothing logged an error`, problems.length === 0, problems.join(' | '));
 }

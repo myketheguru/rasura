@@ -58,6 +58,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod create;
 pub mod edit;
 pub mod error;
 pub mod fonts;

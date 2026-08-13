@@ -1,9 +1,10 @@
-# Deploy Rasura Studio to GitHub Pages.
+# Deploy the Rasura site to GitHub Pages.
 #
-# The demo is static files: an ES module, a stylesheet, the WASM module and a
-# sample document. There is no server, no bundler and no build step beyond
-# compiling the module — which is the point being demonstrated, so the workflow
-# is deliberately the shortest one that can be correct.
+# Two things live here: the documentation at `/`, and the demonstration editor
+# at `/#/editor`. Both are one React application built by Vite, and the module
+# it drives is the same WebAssembly artefact the size budget and the node
+# harness are run against — built here rather than committed, so what deploys is
+# what CI measured.
 #
 # Note what is *absent*: no COOP/COEP headers, because Pages cannot set them and
 # the single-threaded build (§12.1) does not need them. A threaded build would
@@ -15,7 +16,8 @@ on:
   push:
     branches: [main]
     paths:
-      - 'demo/**'
+      - 'web/**'
+      - 'demo/browser.mjs'
       - 'crates/rasura-wasm/**'
       - 'crates/rasura*/src/**'
       - '.github/workflows/pages.yml'
@@ -43,41 +45,63 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
 
       - name: Install the WASM toolchain
         run: |
           cargo install wasm-bindgen-cli --locked
           npm i -g wasm-opt
 
-      # The same script CI uses, so the module on the demo is the module the
-      # size budget and the node harness were run against.
+      # The same script CI uses, so the module on the site is the module the
+      # size budget was measured against.
       - name: Build the module
         run: ./crates/rasura-wasm/build.sh
 
-      # Neither of these needs a browser, and between them they cover the two
-      # failures that would break the page on load: a missing element id and an
-      # import the glue does not export.
-      - name: Check the demo
+      # The sample document is generated rather than committed for the reason
+      # everything under corpus/ is: it is derived, and derived files in a tree
+      # go stale without anyone noticing.
+      - name: Write the sample document
+        run: cargo run -p rasura-flow --example sample
+
+      - name: Stage the module and the sample
         run: |
-          node demo/lint.mjs
-          node demo/test.mjs
+          mkdir -p web/public/wasm
+          cp target/pkg/web/rasura_wasm.js web/public/wasm/
+          cp target/pkg/web/rasura_wasm_bg.wasm web/public/wasm/
+          cp demo/sample.pdf web/public/
 
-      - name: Assemble
-        run: node demo/build.mjs
+      - name: Install
+        run: npm ci
+        working-directory: web
 
-      # And then actually load it. Everything above this line passed on a page
-      # that had never once started in a browser: the module is built with
-      # `--omit-default-module-path` and the page called `init()` bare, so it
-      # reached `WebAssembly.instantiate(undefined, ...)`. Nothing that avoids
-      # a browser can see that, which is why this deploys nothing it has not
-      # watched compile the module and read a document. Chrome is preinstalled
-      # on the runner.
-      - name: The page starts in a real browser
+      # Spec 12.4's "no `any`" is a rule about what this project ships, and it
+      # is worth nothing if the site documenting it is loose. Same setting.
+      - name: Typecheck
+        run: npx tsc -b --noEmit
+        working-directory: web
+
+      - name: Build
+        # Pages serves from a subdirectory, so every asset URL has to be
+        # relative to it. Passed in rather than written down, because the same
+        # build has to work from a local preview at `/`.
+        run: npx vite build
+        working-directory: web
+        env:
+          RASURA_BASE: /rasura/
+
+      # And then actually load it. Everything above this line once passed on a
+      # page that had never started in a browser, so nothing deploys that has
+      # not been watched compile the module and read a document. Chrome is
+      # preinstalled on the runner.
+      - name: The site starts in a real browser
         run: node demo/browser.mjs
+        env:
+          RASURA_DIST: web/dist
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: demo/dist
+          path: web/dist
 
   deploy:
     needs: build

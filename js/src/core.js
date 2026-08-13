@@ -77,6 +77,9 @@ export async function handle(request) {
       case "open":
         return { result: m.openDocument(args[0], args[1], args[2]), transfer: [] };
 
+      case "create":
+        return { result: m.createDocument(args[0], args[1], args[2]), transfer: [] };
+
       case "close":
         return { result: m.closeDocument(args[0]), transfer: [] };
 
