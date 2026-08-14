@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+categories.workspace = true
 description = "Mutation and commit for Rasura: transactions, text operations, reflow, stream patching."
 
 [dependencies]

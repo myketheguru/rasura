@@ -3,7 +3,25 @@
   "version": "0.1.0",
   "description": "True PDF editing in the browser: read a document as paragraphs, change it, and write it back with the untouched bytes intact",
   "license": "MIT OR Apache-2.0",
-  "repository": "github:rasura-pdf/rasura",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/myketheguru/rasura.git",
+    "directory": "js"
+  },
+  "homepage": "https://myketheguru.github.io/rasura",
+  "bugs": "https://github.com/myketheguru/rasura/issues",
+  "keywords": [
+    "pdf",
+    "pdf-editor",
+    "pdf-edit",
+    "pdf-generation",
+    "wasm",
+    "webassembly",
+    "redaction",
+    "browser",
+    "client-side",
+    "typescript"
+  ],
   "type": "module",
   "types": "./types/index.d.ts",
   "exports": {

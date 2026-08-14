@@ -22,7 +22,11 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.85"
-repository = "https://github.com/rasura-pdf/rasura"
+repository = "https://github.com/myketheguru/rasura"
+homepage = "https://myketheguru.github.io/rasura"
+documentation = "https://myketheguru.github.io/rasura"
+keywords = ["pdf", "wasm", "text", "font", "document"]
+categories = ["text-processing", "wasm", "encoding", "multimedia"]
 
 [workspace.dependencies]
 # The internal crates, declared once with a version.
