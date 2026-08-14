@@ -1,6 +1,6 @@
 {
   "name": "rasura",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "True PDF editing in the browser: read a document as paragraphs, change it, and write it back with the untouched bytes intact",
   "license": "MIT OR Apache-2.0",
   "repository": {

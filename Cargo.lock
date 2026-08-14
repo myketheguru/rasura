@@ -576,7 +576,7 @@ dependencies = [
 
 [[package]]
 name = "rasura"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rasura-content",
  "rasura-cos",
@@ -588,7 +588,7 @@ dependencies = [
 
 [[package]]
 name = "rasura-content"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rasura-cos",
  "smallvec",
@@ -597,7 +597,7 @@ dependencies = [
 
 [[package]]
 name = "rasura-contentwalk"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rasura-content",
  "rasura-cos",
@@ -605,7 +605,7 @@ dependencies = [
 
 [[package]]
 name = "rasura-cos"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aes",
  "cbc",
@@ -619,7 +619,7 @@ dependencies = [
 
 [[package]]
 name = "rasura-edit"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rasura-content",
  "rasura-cos",
@@ -631,7 +631,7 @@ dependencies = [
 
 [[package]]
 name = "rasura-flow"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rasura-content",
  "rasura-cos",
@@ -643,7 +643,7 @@ dependencies = [
 
 [[package]]
 name = "rasura-font"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rasura-content",
  "rasura-cos",
@@ -654,7 +654,7 @@ dependencies = [
 
 [[package]]
 name = "rasura-fontsurvey"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rasura-cos",
  "rasura-font",
@@ -662,7 +662,7 @@ dependencies = [
 
 [[package]]
 name = "rasura-invariants"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rasura-content",
  "rasura-cos",
@@ -673,7 +673,7 @@ dependencies = [
 
 [[package]]
 name = "rasura-layout"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rasura-content",
  "rasura-cos",
@@ -682,7 +682,7 @@ dependencies = [
 
 [[package]]
 name = "rasura-pixeldiff"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "image",
  "pdfium-render",
@@ -690,7 +690,7 @@ dependencies = [
 
 [[package]]
 name = "rasura-textdiff"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rasura-content",
  "rasura-cos",
@@ -699,7 +699,7 @@ dependencies = [
 
 [[package]]
 name = "rasura-wasm"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "js-sys",
  "rasura",
@@ -710,7 +710,7 @@ dependencies = [
 
 [[package]]
 name = "rasura-wasm-size"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rasura-content",
  "rasura-cos",

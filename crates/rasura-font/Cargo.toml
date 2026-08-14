@@ -9,6 +9,7 @@ homepage.workspace = true
 documentation.workspace = true
 keywords.workspace = true
 categories.workspace = true
+readme = "README.md"
 description = "Font parsing, metrics, shaping and glyph injection for Rasura"
 
 [dependencies]
