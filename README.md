@@ -1,5 +1,9 @@
 # Rasura
 
+[![crates.io](https://img.shields.io/crates/v/rasura.svg)](https://crates.io/crates/rasura)
+[![npm](https://img.shields.io/npm/v/rasura.svg)](https://www.npmjs.com/package/rasura)
+[![docs](https://img.shields.io/badge/docs-rasura-1f9a63)](https://myketheguru.github.io/rasura/)
+
 **A browser-native SDK for true PDF editing.**
 
 *Rasura* is Latin for a scraping — the erasure of a parchment so the page can be

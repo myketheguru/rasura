@@ -646,8 +646,11 @@ suppressed.
   no maintained pure-Rust replacement, and the alternative is HarfBuzz, which
   §4.2 forbids. Both forbid `unsafe`, and the font layer is fuzzed, so a
   malformed font can panic a worker but not corrupt memory.
-- **The npm package is not published.** All seven crates are on crates.io at
-  0.1.0. npm requires a two-factor code to publish and that is a human step.
+- **Published, and verified from the registry.** Seven crates on crates.io and
+  `rasura@0.1.0` on npm, all at 0.1.0. The npm package was then installed from
+  the registry into an empty directory with `--ignore-scripts` and used to edit a
+  PDF: nothing local was involved, which is the only version of that check worth
+  anything. What has *not* happened is anyone other than us depending on it.
 - **`/StemV` is estimated for every embedded font, and always will be.** No sfnt
   table records it — Type 1 carried it, TrueType never did. It is derived from
   `OS/2.usWeightClass` and `stem_v_guessed` says so on every result, which is the
