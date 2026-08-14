@@ -27,7 +27,9 @@ exist yet. There is no way to publish them together.
 cargo login            # needs your token, once per machine
 ```
 
-Then, in this order, waiting for each to appear in the index before the next:
+Then, in this order, waiting for each to appear in the index before the next.
+**crates.io rate-limits new crates**, so expect to be stopped partway through
+and told when to resume; five went up before the limit hit on the first release.
 
 ```bash
 cargo publish -p rasura-cos

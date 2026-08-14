@@ -2,7 +2,7 @@
 
 **As of this writing.** 1,192 Rust tests and 41 JavaScript tests passing. 1,026
 corpus files green on the invariant suite, zero failing. `cargo deny check` green
-on all four checks. 419 KB gzipped against a 900 KB budget. Nine
+on all four checks. 448.8 KB gzipped against a 900 KB budget. Nine
 CI jobs green, and the documentation site and editor deployed at
 <https://myketheguru.github.io/rasura/> — checked in a real browser, against the
 deployed origin, on every push.
@@ -305,7 +305,7 @@ purpose.
 | 12.2 Worker by default | ● | request/response with ids |
 | 12.2 Transfer rather than copy | ● | both directions; detachment documented |
 | 12.2 `{ worker: false }` | ● | same code, same answers |
-| 12.3 Build flags, size gate in CI | ● | 419 KB gzipped, 46.6% of budget |
+| 12.3 Build flags, size gate in CI | ● | 448.8 KB gzipped, 49.9% of budget |
 | 12.3 Lazy chunk splitting | ○ | one chunk today; `fonts` does not load lazily |
 | 12.4 ESM primary, CJS shim | ● | |
 | 12.4 Hand-written `.d.ts`, no `any` | ● | `tsc --noEmit` under `strict` gates it |
@@ -646,8 +646,8 @@ suppressed.
   no maintained pure-Rust replacement, and the alternative is HarfBuzz, which
   §4.2 forbids. Both forbid `unsafe`, and the font layer is fuzzed, so a
   malformed font can panic a worker but not corrupt memory.
-- **Nothing is published.** Not on crates.io, not on npm. The package installs
-  from a local tarball and works; it has never been through a registry.
+- **The npm package is not published.** All seven crates are on crates.io at
+  0.1.0. npm requires a two-factor code to publish and that is a human step.
 - **`/StemV` is estimated for every embedded font, and always will be.** No sfnt
   table records it — Type 1 carried it, TrueType never did. It is derived from
   `OS/2.usWeightClass` and `stem_v_guessed` says so on every result, which is the
@@ -731,11 +731,11 @@ RASURA_DEMO_ORIGIN=https://myketheguru.github.io/rasura node demo/browser.mjs
 
 | | |
 |---|---|
-| WASM, raw after `wasm-opt -Oz` | 864.7 KB |
-| **WASM, gzipped** | **419.1 KB** — 46.6% of the 900 KB budget |
-| WASM, brotli | 283.3 KB |
-| npm tarball | 386.5 KB |
-| npm unpacked | 950.5 KB |
+| WASM, raw after `wasm-opt -Oz` | 1,076.4 KB |
+| **WASM, gzipped** | **448.8 KB** — 49.9% of the 900 KB budget |
+| WASM, brotli | 351.5 KB |
+| npm tarball | 459.1 KB |
+| npm unpacked | 1.3 MB |
 | Site JS, gzipped | 153.9 KB — React, Radix, the router and both pages |
 | Site CSS, gzipped | 6.8 KB |
 
