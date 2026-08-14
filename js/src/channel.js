@@ -7,7 +7,7 @@
 // gets the first caller's page — a bug that only appears under concurrency and
 // looks like corruption when it does.
 
-import { fromWire, normalise } from "./errors.js";
+import { PdfError, fromWire, normalise } from "./errors.js";
 
 export class Channel {
   /** @param {{ wasmUrl?: string | URL }} [opts] */
@@ -28,6 +28,12 @@ export class Channel {
       const url = new URL("./worker.js", import.meta.url);
       this.worker = await spawn(url);
       this.worker.onMessage((message) => this.receive(message));
+      // A Worker that dies takes every request in flight with it, and nobody
+      // was listening. The symptom was not an error but a **hang**: the module
+      // failed to load on the Worker's thread, `init` was never answered, and
+      // the promise stayed pending for ever. A hang is worse than a failure —
+      // it reads as a slow parser, and in CI as an infrastructure problem.
+      this.worker.onError?.((reason) => this.fail(reason));
       // The wasm module is loaded once, on the Worker's own thread, before any
       // request needs it. Doing it lazily inside the first `open` would make
       // that one call pay for an 800 KB compile and look like a slow parser.
@@ -60,6 +66,23 @@ export class Channel {
         reject(normalise(e));
       }
     });
+  }
+
+  /**
+   * Settle everything in flight as failed, because the Worker is gone.
+   *
+   * @param {string} reason
+   */
+  fail(reason) {
+    const error = new PdfError(
+      "internal",
+      `the worker stopped: ${reason}`,
+      "requests in flight when a worker dies cannot be retried; open the document again",
+    );
+    for (const [id, waiting] of this.pending) {
+      this.pending.delete(id);
+      waiting.reject(error);
+    }
   }
 
   /** @param {{ id: number, ok: boolean, result?: any, error?: any }} message */
@@ -117,6 +140,10 @@ async function spawn(url) {
       onMessage: (fn) => {
         worker.onmessage = (event) => fn(event.data);
       },
+      onError: (fn) => {
+        worker.onerror = (event) => fn(event.message ?? String(event));
+        worker.onmessageerror = () => fn("a message could not be deserialised");
+      },
     };
   }
 
@@ -130,5 +157,11 @@ async function spawn(url) {
     post: (message, transfer) => worker.postMessage(message, transfer),
     terminate: () => worker.terminate(),
     onMessage: (fn) => worker.on("message", fn),
+    onError: (fn) => {
+      worker.on("error", (e) => fn(e?.message ?? String(e)));
+      // A non-zero exit with nothing in flight is a normal shutdown; with
+      // requests waiting it means the thread died under them.
+      worker.on("exit", (code) => code !== 0 && fn(`the worker exited with code ${code}`));
+    },
   };
 }

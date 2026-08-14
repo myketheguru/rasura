@@ -1,10 +1,8 @@
 # Rasura: build report and spec parity
 
-**As of this writing.** 1,192 Rust tests passing. 1,030 corpus files green on the
-invariant suite, zero failing. `cargo deny check` green on all four checks. The
-JavaScript suite's 41 tests **have not been run since `create` was added** — see
-the caveats in §8; the module itself is driven from node on every build and
-passes. 419 KB gzipped against a 900 KB budget. Nine
+**As of this writing.** 1,192 Rust tests and 41 JavaScript tests passing. 1,026
+corpus files green on the invariant suite, zero failing. `cargo deny check` green
+on all four checks. 419 KB gzipped against a 900 KB budget. Nine
 CI jobs green, and the documentation site and editor deployed at
 <https://myketheguru.github.io/rasura/> — checked in a real browser, against the
 deployed origin, on every push.
@@ -331,18 +329,31 @@ purpose.
 Nothing here is checked only against itself. The escalation, in order of how
 much it proves:
 
-**Unit tests — 1,192.** Plus two TypeScript compilation gates, both green: the
+**Unit tests — 1,192**, plus 41 JavaScript tests. Plus two TypeScript gates, both green: the
 package's declarations, and the site, held to the same `strict` and no-`any`
 setting because a rule about what the project ships is worth nothing if the site
 documenting it is loose.
 
-**The JavaScript suite is currently not running.** `node --test js/test/` hangs
-before producing any output — not a failure, a hang, which is worse because a
-timeout in CI reads as an infrastructure problem. The library is not implicated:
-`harness/wasm-size/api.mjs` drives the same shipped module through open, read,
-edit, commit, reopen, protect and close, and passes. The fault is in the test
-harness or its Worker transport and it is open. Recorded here rather than
-rounded off, because a suite that is not running is not a suite.
+**The JavaScript suite hung, and the library was implicated after all.** It
+passes now, 41 tests. Two faults, and how they were told apart is worth keeping.
+
+The proximate cause was a bad module: the nodejs-target glue, which is CommonJS,
+copied into a slot that imports the web-target ESM glue. A mistake in a hand-run
+build step, not in the library.
+
+The real fault was underneath it. Nothing listened for the Worker's `error`
+event, so a Worker that died at module load took every request in flight with it
+and answered none. The symptom was not a failure but a hang, which is worse: it
+reads as a slow parser, and in CI as an infrastructure problem.
+
+An earlier draft of this document said the library was not implicated, on the
+evidence that `harness/wasm-size/api.mjs` passes. That evidence does not reach
+that claim. The size harness drives the module directly; the thing that hung is
+the Worker transport, which is the default path for every consumer of the
+package. The passing and failing evidence sat on opposite sides of the boundary
+in question, and §7 already records two earlier bugs with the same symptom in the
+same subsystem. The claim was wrong, and the reasoning behind it is the kind this
+document exists to refuse.
 
 **The corpus — 1,026 files.** Mozilla's pdf.js test suite (974 files, two decades
 of cases kept precisely because they broke something), 20 generated fixtures, 13
@@ -626,9 +637,6 @@ suppressed.
   no maintained pure-Rust replacement, and the alternative is HarfBuzz, which
   §4.2 forbids. Both forbid `unsafe`, and the font layer is fuzzed, so a
   malformed font can panic a worker but not corrupt memory.
-- **The JavaScript suite hangs and is therefore unverified.** See §4. `Pdf.create`
-  went in without its tests running, which is exactly the situation the rest of
-  this document argues against, and it is the first thing to fix.
 - **Nothing is published.** Not on crates.io, not on npm. The package installs
   from a local tarball and works; it has never been through a registry.
 - **`/StemV` is estimated for every embedded font, and always will be.** No sfnt
