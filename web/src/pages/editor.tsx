@@ -63,14 +63,17 @@ interface LogEntry {
 let logSeq = 0
 
 export default function Editor() {
-  const canvasRef = React.useRef<HTMLCanvasElement>(null)
   const [wasm, setWasm] = React.useState<R.Wasm | null>(null)
   const [fatal, setFatal] = React.useState<string | null>(null)
+  const scrollRef = React.useRef<HTMLDivElement>(null)
+  const pageRefs = React.useRef<(HTMLDivElement | null)[]>([])
+  const canvasRefs = React.useRef<(HTMLCanvasElement | null)[]>([])
   const [handle, setHandle] = React.useState<number | null>(null)
   const [fileName, setFileName] = React.useState('sample.pdf')
   const [info, setInfo] = React.useState<R.DocumentInfo | null>(null)
-  const [page, setPage] = React.useState<PageModel | null>(null)
+  const [pages, setPages] = React.useState<(PageModel | null)[]>([])
   const [pageIndex, setPageIndex] = React.useState(0)
+  const page = pages[pageIndex] ?? null
   const [selected, setSelected] = React.useState<Paragraph | null>(null)
   const [floor, setFloor] = React.useState('overlaid')
   const [session, setSession] = React.useState({ staged: 0, canUndo: false, canRedo: false })
@@ -100,7 +103,7 @@ export default function Editor() {
   const fail = React.useCallback(
     (e: unknown, what: string) => {
       const { code, message } = R.coded(e)
-      note(what, 'refused', `${code} — ${message}`)
+      note(what, 'refused', `${code}: ${message}`)
       setStatus({ text: `${what} refused: ${code}`, state: 'error' })
     },
     [note],
@@ -120,7 +123,7 @@ export default function Editor() {
         const h = m.openDocument(buf, undefined, undefined)
         setHandle(h)
         setInfo(m.documentInfo(h))
-        setPage(m.pageContent(h, 0))
+        setPages(readPages(m, h))
         setStatus({ text: 'opened sample.pdf', state: 'ok' })
       })
       .catch((e) => {
@@ -135,22 +138,38 @@ export default function Editor() {
     }
   }, [])
 
+  /** Read every page's model. Cheap enough for a demo, and the stage shows them all. */
+  const readPages = React.useCallback((m: R.Wasm, h: number) => {
+    const count = m.documentInfo(h).pageCount
+    const out: (PageModel | null)[] = []
+    for (let i = 0; i < count; i += 1) {
+      try {
+        out.push(m.pageContent(h, i))
+      } catch {
+        // A page whose content stream will not decode still occupies a slot, or
+        // every page after it would be numbered wrongly.
+        out.push(null)
+      }
+    }
+    return out
+  }, [])
+
   const refresh = React.useCallback(
-    (m: R.Wasm, h: number, index = pageIndex) => {
-      setPage(m.pageContent(h, index))
+    (m: R.Wasm, h: number) => {
+      setPages(readPages(m, h))
       setInfo(m.documentInfo(h))
       setSession(m.sessionStatus(h))
     },
-    [pageIndex],
+    [readPages],
   )
 
   // --- drawing -------------------------------------------------------------
 
-  React.useEffect(() => {
-    const canvas = canvasRef.current
+  const drawPage = React.useCallback((canvas: HTMLCanvasElement | null, page: PageModel | null, highlight: Paragraph | null) => {
     if (!canvas || !page) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
+    const selected = highlight
 
     const { width, height } = pageBox(page)
     const dpr = window.devicePixelRatio || 1
@@ -229,15 +248,45 @@ export default function Editor() {
       ctx.fillStyle = `hsl(${accent} / 0.08)`
       ctx.fillRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0)
     }
-  }, [page, selected])
+  }, [])
 
-  const toModel = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current!
-    const rect = canvas.getBoundingClientRect()
-    const { width, height } = pageBox(page!)
+  // Every page is drawn, not just the current one, because every page is on
+  // screen: the stage scrolls continuously and page two is directly under page
+  // one rather than behind a button.
+  React.useEffect(() => {
+    pages.forEach((p, i) => drawPage(canvasRefs.current[i], p, i === pageIndex ? selected : null))
+  }, [pages, selected, pageIndex, drawPage])
+
+  // Which page is being read, from what is actually in view. The one covering
+  // the middle of the viewport wins; using the topmost visible page makes the
+  // label flick to the next page as soon as a sliver of it appears.
+  React.useEffect(() => {
+    const root = scrollRef.current
+    if (!root || pages.length < 2) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) {
+            const i = pageRefs.current.indexOf(e.target as HTMLDivElement)
+            if (i >= 0) setPageIndex(i)
+          }
+        }
+      },
+      { root, rootMargin: '-45% 0px -45% 0px' },
+    )
+    for (const el of pageRefs.current) if (el) observer.observe(el)
+    return () => observer.disconnect()
+  }, [pages.length])
+
+  const toModel = (e: React.MouseEvent<HTMLCanvasElement>, index: number) => {
+    const model = pages[index]
+    if (!model) return null
+    const rect = e.currentTarget.getBoundingClientRect()
+    const { width, height } = pageBox(model)
     return {
       x: ((e.clientX - rect.left) / rect.width) * width,
       y: ((e.clientY - rect.top) / rect.height) * height,
+      model,
     }
   }
 
@@ -266,7 +315,7 @@ export default function Editor() {
     )
     if (out) {
       note('Replace text', out.fidelity, `${range.end - range.start} → ${range.text.length} characters`)
-      setStatus({ text: `text replaced — ${out.fidelity}`, state: 'ok' })
+      setStatus({ text: `text replaced, ${out.fidelity}`, state: 'ok' })
       setSelected(null)
     }
   }
@@ -276,7 +325,7 @@ export default function Editor() {
     if (out) {
       setSaved(out)
       note('Commit', 'exact', `${out.mode}, ${fmtBytes(out.bytes.length)}`)
-      setStatus({ text: `committed — ${out.mode}`, state: 'ok' })
+      setStatus({ text: `committed, ${out.mode}`, state: 'ok' })
     }
   }
 
@@ -292,7 +341,7 @@ export default function Editor() {
       a.click()
       URL.revokeObjectURL(url)
       note('Save', 'exact', `${out.mode}, ${fmtBytes(out.bytes.length)}`)
-      setStatus({ text: `saved — ${out.mode}`, state: 'ok' })
+      setStatus({ text: `saved, ${out.mode}`, state: 'ok' })
     }
   }
 
@@ -308,7 +357,7 @@ export default function Editor() {
       setSelected(null)
       setSaved(null)
       setLog([])
-      setPage(wasm.pageContent(h, 0))
+      setPages(readPages(wasm, h))
       setInfo(wasm.documentInfo(h))
       setSession(wasm.sessionStatus(h))
       setStatus({ text: `opened ${file.name}`, state: 'ok' })
@@ -317,12 +366,12 @@ export default function Editor() {
     }
   }
 
+  /** Scroll to a page rather than swapping which one is shown. */
   const goto = (index: number) => {
-    if (!wasm || handle === null || !info) return
-    const next = Math.max(0, Math.min(info.pageCount - 1, index))
-    setPageIndex(next)
+    const next = Math.max(0, Math.min(pages.length - 1, index))
     setSelected(null)
-    setPage(wasm.pageContent(handle, next))
+    pageRefs.current[next]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    setPageIndex(next)
   }
 
   if (fatal) {
@@ -472,7 +521,7 @@ export default function Editor() {
           <Info className="mt-0.5 size-4 shrink-0 text-info" />
           <p className="flex-1 text-muted-foreground">
             <strong className="text-foreground">This is a model view, not a raster.</strong>{' '}
-            Rasura has no renderer and will not grow one — everything here is drawn from
+            Rasura has no renderer and will not grow one. Everything here is drawn from
             Rasura's own model, so every pixel came from the library rather than from a
             second one.
           </p>
@@ -485,32 +534,51 @@ export default function Editor() {
       {/* --- workspace --- */}
       <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[1fr_320px]">
         <div className="flex min-h-0 min-w-0 flex-col">
-          <div className="flex flex-1 justify-center overflow-auto bg-muted/50 p-6">
-            <div className="h-fit rounded-[3px] bg-white shadow-md">
-              <canvas
-                ref={canvasRef}
-                className="block cursor-crosshair rounded-[3px]"
-                onClick={(e) => {
-                  if (!page) return
-                  const { x, y } = toModel(e)
-                  const p = paragraphAt(page, x, y)
-                  setSelected(p)
-                  if (!p) {
-                    const img = imageAt(page, x, y)
-                    if (img) setStatus({ text: 'image selected', state: 'idle' })
-                  }
+          <div
+            ref={scrollRef}
+            className="flex flex-1 flex-col items-center gap-5 overflow-auto bg-muted/50 p-6"
+          >
+            {pages.map((_model, i) => (
+              <div
+                key={i}
+                ref={(el) => {
+                  pageRefs.current[i] = el
                 }}
-                onDoubleClick={(e) => {
-                  if (!page) return
-                  const { x, y } = toModel(e)
-                  const p = paragraphAt(page, x, y)
-                  if (p) setEditing({ paragraph: p, text: p.text })
-                }}
-              />
-            </div>
+                className="relative h-fit rounded-[3px] bg-white shadow-md"
+              >
+                <canvas
+                  ref={(el) => {
+                    canvasRefs.current[i] = el
+                  }}
+                  className="block cursor-crosshair rounded-[3px]"
+                  onClick={(e) => {
+                    const hit = toModel(e, i)
+                    if (!hit) return
+                    setPageIndex(i)
+                    const p = paragraphAt(hit.model, hit.x, hit.y)
+                    setSelected(p)
+                    if (!p && imageAt(hit.model, hit.x, hit.y)) {
+                      setStatus({ text: 'image selected', state: 'idle' })
+                    }
+                  }}
+                  onDoubleClick={(e) => {
+                    const hit = toModel(e, i)
+                    if (!hit) return
+                    const p = paragraphAt(hit.model, hit.x, hit.y)
+                    if (p) {
+                      setPageIndex(i)
+                      setEditing({ paragraph: p, text: p.text })
+                    }
+                  }}
+                />
+                <span className="absolute -bottom-4 right-0 text-[10px] tabular-nums text-muted-foreground">
+                  {i + 1}
+                </span>
+              </div>
+            ))}
           </div>
           <p className="shrink-0 border-t border-border bg-card px-3 py-1.5 text-center text-[11.5px] text-muted-foreground">
-            Click to select a paragraph · double-click to edit it
+            Scroll to move between pages · click to select a paragraph · double-click to edit
           </p>
         </div>
 
@@ -606,7 +674,7 @@ export default function Editor() {
           <DialogHeader>
             <DialogTitle>Redact text</DialogTitle>
             <DialogDescription>
-              Removal is irreversible and forces a full rewrite — an incremental save would
+              Removal is irreversible and forces a full rewrite. An incremental save would
               leave the original bytes in the file.
             </DialogDescription>
           </DialogHeader>
@@ -639,7 +707,7 @@ export default function Editor() {
                     : '',
                 )
                 setStatus({
-                  text: verdict?.clean ? 'redacted and verified' : 'redacted — trace remains',
+                  text: verdict?.clean ? 'redacted and verified' : 'redacted, but a trace remains',
                   state: verdict?.clean ? 'ok' : 'error',
                 })
               }}
@@ -710,12 +778,12 @@ function Inspector({
                 <Layers className="size-3.5" /> Document
               </CardHeader>
               <CardBody>
-                <Pair k="Pages" v={info?.pageCount ?? '—'} />
-                <Pair k="Kind" v={info?.documentKind ?? '—'} />
-                <Pair k="Tagged" v={info?.taggedStatus ?? '—'} />
-                <Pair k="Revisions" v={info?.revisionCount ?? '—'} />
+                <Pair k="Pages" v={info?.pageCount ?? '–'} />
+                <Pair k="Kind" v={info?.documentKind ?? '–'} />
+                <Pair k="Tagged" v={info?.taggedStatus ?? '–'} />
+                <Pair k="Revisions" v={info?.revisionCount ?? '–'} />
                 <Pair k="Encrypted" v={info?.encrypted ? 'yes' : 'no'} />
-                <Pair k="Memory" v={info ? fmtBytes(info.memoryUsage) : '—'} />
+                <Pair k="Memory" v={info ? fmtBytes(info.memoryUsage) : '–'} />
               </CardBody>
             </Card>
 
