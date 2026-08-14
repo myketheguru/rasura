@@ -1,8 +1,8 @@
 # Rasura: build report and spec parity
 
-**As of this writing.** 1,192 Rust tests and 41 JavaScript tests passing. 1,026
+**As of this writing.** 1,196 Rust tests and 41 JavaScript tests passing. 1,030
 corpus files green on the invariant suite, zero failing. `cargo deny check` green
-on all four checks. 448.8 KB gzipped against a 900 KB budget. Nine
+on all four checks. 449.7 KB gzipped against a 900 KB budget. Nine
 CI jobs green, and the documentation site and editor deployed at
 <https://myketheguru.github.io/rasura/> — checked in a real browser, against the
 deployed origin, on every push.
@@ -226,7 +226,7 @@ purpose.
 | Item | | Notes |
 |---|---|---|
 | 8.1–8.2 Parsing all five containers | ● | Type1, TrueType, CFF, CID CFF, OpenType |
-| 8.3 Shaping | ● | rustybuzz; script and direction derived from run content |
+| 8.3 Shaping | ● | harfrust; script and direction derived from run content |
 | 8.4 Glyph injection | ● | validated against Roboto by pdfium and pdf.js |
 | 8.4 **Embedding a font the document never had** | ● | `rasura_font::create`; `/FontFile2`, descriptor and `/Widths` synthesised from the program. Simple or `/Type0`, chosen from the text |
 | 8.4 **`/FontDescriptor` from the font program** | ● | `rasura_font::describe`; `head`, `post`, `hhea`, `OS/2`, `name`. Nothing here was read anywhere in the workspace before |
@@ -306,7 +306,7 @@ purpose.
 | 12.2 Worker by default | ● | request/response with ids |
 | 12.2 Transfer rather than copy | ● | both directions; detachment documented |
 | 12.2 `{ worker: false }` | ● | same code, same answers |
-| 12.3 Build flags, size gate in CI | ● | 448.8 KB gzipped, 49.9% of budget |
+| 12.3 Build flags, size gate in CI | ● | 449.7 KB gzipped, 50.0% of budget |
 | 12.3 Lazy chunk splitting | ○ | one chunk today; `fonts` does not load lazily |
 | 12.4 ESM primary, CJS shim | ● | |
 | 12.4 Hand-written `.d.ts`, no `any` | ● | `tsc --noEmit` under `strict` gates it |
@@ -331,7 +331,7 @@ purpose.
 Nothing here is checked only against itself. The escalation, in order of how
 much it proves:
 
-**Unit tests — 1,192**, plus 41 JavaScript tests. Plus two TypeScript gates, both green: the
+**Unit tests — 1,196**, plus 41 JavaScript tests. Plus two TypeScript gates, both green: the
 package's declarations, and the site, held to the same `strict` and no-`any`
 setting because a rule about what the project ships is worth nothing if the site
 documenting it is loose.
@@ -357,10 +357,14 @@ in question, and §7 already records two earlier bugs with the same symptom in t
 same subsystem. The claim was wrong, and the reasoning behind it is the kind this
 document exists to refuse.
 
-**The corpus — 1,026 files.** Mozilla's pdf.js test suite (974 files, two decades
-of cases kept precisely because they broke something), 20 generated fixtures, 13
-LaTeX documents, 3 Chrome print-to-PDF. Fetched rather than vendored: they are
+**The corpus — 1,030 files.** Mozilla's pdf.js test suite (974 files, two decades
+of cases kept precisely because they broke something), 13 LaTeX documents, 3
+Chrome print-to-PDF, 20 generated fixtures on disk and 20 the runner builds in
+memory on every run. The fetched ones are fetched rather than vendored: they are
 other people's files under other people's licences.
+
+An earlier version of this said 1,030 and listed parts summing to 1,010. Neither
+was the number the suite runs, which is the one printed at the end of it.
 
 **Invariants**, run over the whole corpus on every CI run:
 
@@ -504,6 +508,37 @@ absorbs the renumbering and no content stream changes.
 
 The ones worth recording, because each was silent.
 
+**Every embedded font had an out-of-order table directory.** OpenType requires
+the sfnt table directory "sorted in ascending order by tag" and readers take it
+at its word: `read-fonts`, HarfBuzz and FreeType's fast path binary-search it.
+The rebuilder copied the source font's table order and appended anything new at
+the end. Real fonts arrive sorted, so that was almost right — but subsetting
+appends every time. `compact_truetype` drops `cmap` because it is renumbering
+outlines, and the writer adds one back, so `cmap` landed last in **every font
+this project has ever embedded in a composed document**:
+
+```
+GDEF LTSH OS/2 cvt  fpgm gasp glyf hdmx head hhea hmtx loca maxp name prep cmap
+                                                                          ^^^^
+```
+
+An unsorted directory does not fail to parse. It fails to *find* the table, so
+the symptom is text that shapes to notdef in someone else's reader with no error
+anywhere.
+
+Two things hid it. `rustybuzz` scans the directory linearly, so the shaper never
+minded. And the test that existed asked *this project's own* cmap parser, which
+also scans linearly — it confirmed the subset kept a cmap and that the cmap
+mapped `A`, and both were true. The check was asking the one reader guaranteed
+to agree.
+
+The harfrust migration surfaced it immediately, because `read-fonts` binary
+searches. That is the argument for a third-party judge stated as plainly as it
+gets: the bug was reachable by every outside reader and invisible to every check
+written from the inside. The replacement test asserts the ordering *and* shapes
+a word through a foreign shaper, so the rule and its consequence both have to
+hold.
+
 **The demo had never started.** `--omit-default-module-path` deletes the glue's
 `import.meta.url` fallback and the page called `init()` bare, on the strength of
 a comment claiming the opposite. It reached
@@ -642,18 +677,43 @@ suppressed.
   pdf.js and pdfium opening a `/R` 6 file we wrote is independent — but a `/R` 6
   file from a real producer would still be worth having.
 - **No long fuzzing campaign** has been run, only the CI smoke.
-- **`rustybuzz` and `ttf-parser` are unmaintained** (RUSTSEC-2026-0192/0206),
-  and **there is a replacement**. An earlier version of this caveat said there
-  was not. That was wrong: the rustybuzz maintainer has declared the crate
-  unmaintained and points to **harfrust**, now part of the HarfBuzz project, and
-  harfrust was forked from rustybuzz specifically to move from `ttf-parser` to
-  `read-fonts` so that consumers stop shipping two font parsers. That is this
-  project's exact situation, and the sentence claiming otherwise shipped in a
-  published document, which is worse than the advisory it was excusing.
+- ~~**`rustybuzz` and `ttf-parser` are unmaintained**~~ **(done).** The shaper is
+  now **harfrust**, which clears RUSTSEC-2026-0192 and -0206 and removes
+  `ttf-parser`, leaving `read-fonts` as the only font parser in the tree.
 
-  Migration is planned and not done. Until it is: both crates forbid `unsafe`
-  and the font layer is fuzzed, so a malformed font can panic a worker but not
-  corrupt memory. That is a mitigation, not a rationale.
+  An earlier version of this caveat claimed no replacement existed. That was
+  wrong and it shipped in a published document, which is worse than the advisory
+  it was excusing: the rustybuzz maintainer had declared the crate unmaintained
+  and pointed at harfrust, which was forked from rustybuzz specifically so
+  consumers stop shipping two font parsers.
+
+  The migration was small — both are ports of the same HarfBuzz algorithm, the
+  API maps one-for-one, and positions still come back in font units, so no
+  caller changed and no corpus result moved.
+
+  Both modules built on the same machine with the same flags, measured with
+  `harness/wasm-size`:
+
+  | | rustybuzz | harfrust |
+  |---|---|---|
+  | module, raw | 1,077.8 KB | 1,081.6 KB |
+  | module, gzipped | 449.2 KB | 449.7 KB |
+  | module, brotli | 352.0 KB | 352.2 KB |
+  | advisories | 2 | 0 |
+  | font parsers in the tree | 2 | 1 |
+
+  **Size-neutral**: half a kilobyte gzipped, which is noise. Dropping
+  `ttf-parser` removes a parser from the dependency tree without removing much
+  code from the artefact, because harfrust brings its own tables to replace it.
+  The reason to do it is the advisories and having one font parser rather than
+  two, not the download.
+
+  An earlier draft of this table claimed 122 KB saved raw and 33 KB lost
+  gzipped. Both were wrong: they compared against a day-old build that differed
+  by more than the shaper. The numbers above come from building both revisions
+  from source, which is the only comparison that isolates the change.
+
+  It also found a real bug, below.
 - **Published, and verified from the registry.** Seven crates on crates.io and
   `rasura@0.1.0` on npm, all at 0.1.0. The npm package was then installed from
   the registry into an empty directory with `--ignore-scripts` and used to edit a
@@ -687,9 +747,9 @@ was wrong about *why*; see §6. Write-up:
 [q1-tounicode-coverage.md](q1-tounicode-coverage.md).
 
 **Q6 — the bundle floor.** The object layer is 123 KB gzipped as WASM. The whole
-`core` chunk — cos, content, layout, font, rustybuzz, ttf-parser and every
+`core` chunk — cos, content, layout, font, harfrust, read-fonts and every
 generated table — is 413 KB, 45.9% of budget. The shipped module with the API on
-top is 448.8 KB. The module split in §12.3 stands. Write-up:
+top is 449.7 KB. The module split in §12.3 stands. Write-up:
 [q6-bundle-floor.md](q6-bundle-floor.md).
 
 Q2 through Q5 have not been measured.
@@ -699,12 +759,12 @@ Q2 through Q5 have not been measured.
 ## 10. Reproducing all of it
 
 ```bash
-# Rust: 1,192 tests
+# Rust: 1,196 tests
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo deny check
 
-# The corpus: 1,026 files
+# The corpus: 1,030 files
 ./corpus/fetch.sh                     # ~119 MB, Apache-2.0
 ./corpus/fetch-font.sh                # Roboto, Apache-2.0
 cargo run --release -p rasura-invariants
@@ -743,7 +803,7 @@ RASURA_DEMO_ORIGIN=https://myketheguru.github.io/rasura node demo/browser.mjs
 | | |
 |---|---|
 | WASM, raw after `wasm-opt -Oz` | 1,076.4 KB |
-| **WASM, gzipped** | **448.8 KB** — 49.9% of the 900 KB budget |
+| **WASM, gzipped** | **449.7 KB** — 50.0% of the 900 KB budget |
 | WASM, brotli | 351.5 KB |
 | npm tarball | 459.1 KB |
 | npm unpacked | 1.3 MB |
@@ -752,7 +812,7 @@ RASURA_DEMO_ORIGIN=https://myketheguru.github.io/rasura node demo/browser.mjs
 
 The site's JavaScript is not counted against §12.3's budget and should not be:
 the budget is about what a *caller* ships when they install the package, and none
-of React reaches them. The module the site loads is the same 448.8 KB artefact the
+of React reaches them. The module the site loads is the same 449.7 KB artefact the
 gate measures.
 
 A subset is worth its own line, because it is the number that decides whether

@@ -354,6 +354,19 @@ pub fn rebuild(data: &[u8], font: &Sfnt, replacements: &[([u8; 4], Vec<u8>)]) ->
         }
     }
 
+    // OpenType requires directory entries "sorted in ascending order by tag",
+    // and readers take it at its word: `read-fonts`, HarfBuzz and FreeType's
+    // fast path binary-search the directory rather than scanning it.
+    //
+    // Copying the target's order was almost right, because a real font arrives
+    // sorted. The append above is what broke it, and subsetting appends every
+    // time: `compact_truetype` drops `cmap` and the writer adds one back, so
+    // every font this crate embedded had its `cmap` last. An unsorted
+    // directory does not fail to parse, it fails to *find* the table, so the
+    // symptom was text shaping to notdef in other people's readers while this
+    // crate's own linear-scanning parser saw nothing wrong.
+    tables.sort_by(|(a, _), (b, _)| a.cmp(b));
+
     let n = tables.len();
     let mut out = Vec::new();
     // The *sub-font's* version tag, which for a TrueType Collection is not the

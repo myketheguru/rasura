@@ -2302,7 +2302,7 @@ only the parsed objects: a string can survive somewhere no object model reaches.
 ### What the corpus taught, in order
 
 Steps 3 and 4 grew considerably in the doing. Each of these was found by running
-I7 over 1,026 files rather than by reading the spec:
+I7 over 1,030 files rather than by reading the spec:
 
 1. **Page-scoped was wrong.** The first version redacted one page; `verify` is
    document-scoped and immediately failed on a word appearing on page two.
@@ -2465,7 +2465,7 @@ to.
 
 ## §14 — Testing
 
-Measured over 1,026 corpus files:
+Measured over 1,030 corpus files:
 
 | Invariant | Passed | Failed | Skipped | State |
 |---|---|---|---|---|
@@ -2784,7 +2784,7 @@ it, so an unsupplied character does not fail the edit — the text is written, t
 report names the character, and `requireFidelity` above the bottom rung refuses.
 Being stricter by default would have broken every edit to a document with a
 symbolic font whose `cmap` this layer reads differently from its producer, and
-the corpus is the reason to care: 1,026 files still green.
+the corpus is the reason to care: 1,030 files still green.
 
 ### `npm i rasura`, done rather than intended
 

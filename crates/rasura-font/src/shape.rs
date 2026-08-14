@@ -1,6 +1,6 @@
-//! Shaping, via `rustybuzz`. Spec 8.3.
+//! Shaping, via `harfrust`. Spec 8.3.
 //!
-//! Spec 8.3 divides the work plainly: complex scripts "are `rustybuzz`'s job;
+//! Spec 8.3 divides the work plainly: complex scripts "are the shaper's job;
 //! your job is to pass correct script, language, and direction, derived from
 //! the run's Unicode content". So this module is mostly about *deciding what to
 //! ask for* — the shaping call itself is one line.
@@ -8,7 +8,13 @@
 //! Getting the decision wrong is quiet rather than loud. Hand Arabic to the
 //! shaper as left-to-right Latin and it produces glyphs, in the wrong order,
 //! with no joining forms; nothing errors. That is why script and direction
-//! detection carry the tests here and the `rustybuzz` call barely does.
+//! detection carry the tests here and the shaping call barely does.
+//!
+//! The shaper was `rustybuzz` until harfrust replaced it. Both are ports of the
+//! same HarfBuzz algorithm and the positions land in the same place, but
+//! rustybuzz is unmaintained (RUSTSEC-2026-0192 and -0206) and carried a second
+//! font parser, `ttf-parser`, alongside the one the rest of this crate reads
+//! tables with. One shaper, one parser, and an advisory list that is empty.
 //!
 //! The **reshape boundary rule** — which glyphs may be rewritten at all — is in
 //! [`crate::reshape`], deliberately separate: it is index arithmetic that
@@ -27,11 +33,11 @@ pub enum Direction {
 }
 
 impl Direction {
-    fn to_rustybuzz(self) -> rustybuzz::Direction {
+    fn to_harfrust(self) -> harfrust::Direction {
         match self {
-            Direction::LeftToRight => rustybuzz::Direction::LeftToRight,
-            Direction::RightToLeft => rustybuzz::Direction::RightToLeft,
-            Direction::TopToBottom => rustybuzz::Direction::TopToBottom,
+            Direction::LeftToRight => harfrust::Direction::LeftToRight,
+            Direction::RightToLeft => harfrust::Direction::RightToLeft,
+            Direction::TopToBottom => harfrust::Direction::TopToBottom,
         }
     }
 
@@ -75,18 +81,20 @@ pub struct ShapedGlyph {
 
 /// Shape a run.
 ///
-/// Returns `None` when the bytes are not a font `rustybuzz` can load, which is
+/// Returns `None` when the bytes are not a font the shaper can load, which is
 /// reported rather than papered over: a caller that cannot shape must fall back
 /// to preserving the original glyphs, not to guessing new ones.
 pub fn shape(font: &[u8], request: &ShapeRequest) -> Option<Vec<ShapedGlyph>> {
-    let face = rustybuzz::Face::from_slice(font, 0)?;
+    let face = harfrust::FontRef::from_index(font, 0).ok()?;
+    let data = harfrust::ShaperData::new(&face);
+    let shaper = data.shaper(&face).build();
 
-    let mut buffer = rustybuzz::UnicodeBuffer::new();
+    let mut buffer = harfrust::UnicodeBuffer::new();
     buffer.push_str(&request.text);
-    buffer.set_direction(request.direction.to_rustybuzz());
-    if let Some(script) = rustybuzz::Script::from_iso15924_tag(
-        rustybuzz::ttf_parser::Tag::from_bytes(&request.script),
-    ) {
+    buffer.set_direction(request.direction.to_harfrust());
+    if let Some(script) =
+        harfrust::Script::from_iso15924_tag(harfrust::Tag::new(&request.script))
+    {
         buffer.set_script(script);
     }
     if let Some(lang) = request.language.as_ref().and_then(|l| l.parse().ok()) {
@@ -107,7 +115,9 @@ pub fn shape(font: &[u8], request: &ShapeRequest) -> Option<Vec<ShapedGlyph>> {
         features.push(feature(b"clig", false));
     }
 
-    let output = rustybuzz::shape(&face, &features, buffer);
+    // No scale is set, so positions come back in font units, which is what
+    // `ShapedGlyph` documents and every caller divides by unitsPerEm itself.
+    let output = shaper.shape(buffer, harfrust::ShapeOptions::new().features(&features));
     let infos = output.glyph_infos();
     let positions = output.glyph_positions();
 
@@ -127,8 +137,8 @@ pub fn shape(font: &[u8], request: &ShapeRequest) -> Option<Vec<ShapedGlyph>> {
     )
 }
 
-fn feature(tag: &[u8; 4], on: bool) -> rustybuzz::Feature {
-    rustybuzz::Feature::new(rustybuzz::ttf_parser::Tag::from_bytes(tag), u32::from(on), ..)
+fn feature(tag: &[u8; 4], on: bool) -> harfrust::Feature {
+    harfrust::Feature::new(harfrust::Tag::new(tag), u32::from(on), ..)
 }
 
 /// The dominant script of a string, as an ISO 15924 tag.

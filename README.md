@@ -107,7 +107,7 @@ Everything in the library follows from these, in this order.
 **1. Non-locality is forbidden.** An edit on page 40 does not change the
 rendered output of any other page by a pixel, and does not alter the bytes of
 any object it did not need to touch. An unedited save returns the input byte for
-byte. This is checked across 1,026 real PDFs on every build.
+byte. This is checked across 1,030 real PDFs on every build.
 
 **2. Fidelity is reported, never assumed.** Operations return the rung they
 reached rather than throwing on degradation:
@@ -164,8 +164,8 @@ on its own.
 The library reconstructs documents nobody controls, so most of the verification
 effort goes on evidence from outside the project.
 
-- **1,195 Rust tests and 41 JavaScript tests.**
-- **1,026 real PDFs**, mostly two decades of pdf.js regression cases, run
+- **1,196 Rust tests and 41 JavaScript tests.**
+- **1,030 real PDFs**, mostly two decades of pdf.js regression cases, run
   through eight invariants on every build. Skips are itemised with reasons
   rather than counted as passes.
 - **Three independent judges.** pdf.js extracts text and builds fonts, pdfium

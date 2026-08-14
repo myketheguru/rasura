@@ -588,4 +588,57 @@ mod tests {
             "a glyph nobody asked for should not be in the subset"
         );
     }
+
+    #[test]
+    fn the_subset_directory_is_sorted_and_a_foreign_reader_finds_the_cmap() {
+        // The test above asks *this crate's* cmap parser, which scans the
+        // directory linearly and therefore cannot see the fault this one
+        // catches. OpenType requires directory entries "sorted in ascending
+        // order by tag" and readers take it at its word: `read-fonts`,
+        // HarfBuzz and FreeType's fast path all binary-search it. An unsorted
+        // directory does not fail to parse, it fails to *find* tables, so the
+        // symptom is text that shapes to notdef rather than an error.
+        //
+        // `compact_truetype` drops `cmap` and the writer adds one back, which
+        // put it after `maxp` in every font this crate has ever embedded.
+        let Some(data) = roboto() else {
+            eprintln!("skipped: run ./corpus/fetch-font.sh");
+            return;
+        };
+        let embedded = embed_truetype(&data, &Options::for_text("Hamburg"), ids()).unwrap();
+        let program = embedded
+            .objects
+            .iter()
+            .find_map(|(_, o)| o.as_stream())
+            .expect("the /FontFile2 stream")
+            .pending_decoded()
+            .expect("the content that was set");
+
+        let n = u16::from_be_bytes([program[4], program[5]]) as usize;
+        let tags: Vec<[u8; 4]> = (0..n)
+            .map(|i| {
+                let at = 12 + i * 16;
+                [program[at], program[at + 1], program[at + 2], program[at + 3]]
+            })
+            .collect();
+        let mut sorted = tags.clone();
+        sorted.sort_unstable();
+        assert_eq!(
+            tags,
+            sorted,
+            "the directory is out of order: {:?}",
+            tags.iter().map(|t| String::from_utf8_lossy(t).into_owned()).collect::<Vec<_>>()
+        );
+
+        // And the consequence, which is what actually breaks: a real shaper
+        // resolving letters through that cmap.
+        let request =
+            crate::shape::request_for("Hamburg", false, crate::KerningSource::None, true, None);
+        let shaped = crate::shape(program, &request).expect("the subset loads");
+        assert!(
+            shaped.len() == 7 && shaped.iter().all(|g| g.gid != 0),
+            "every letter should resolve, got {:?}",
+            shaped.iter().map(|g| g.gid).collect::<Vec<_>>()
+        );
+    }
 }

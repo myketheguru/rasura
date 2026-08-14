@@ -42,24 +42,18 @@ deny = [
 version = 2
 yanked = "deny"
 
-# Unmaintained notices, not vulnerabilities. Recorded rather than suppressed
-# wholesale: a *security* advisory against either crate still fails this gate,
-# and these two entries are the only exceptions.
-ignore = [
-    # RUSTSEC-2026-0192 / RUSTSEC-2026-0206. `ttf-parser` and `rustybuzz` were
-    # both declared unmaintained by their author. They are spec 8.3's shaping
-    # engine — "this is rustybuzz's job" — and there is no maintained pure-Rust
-    # replacement: the alternative is HarfBuzz, which is C++ and forbidden by
-    # spec 4.2.
-    #
-    # Both are parsers of untrusted input, so this is a real risk being accepted
-    # rather than an administrative one. What bounds it: the font layer already
-    # runs under `cargo-fuzz`, both crates are `#![forbid(unsafe_code)]`, and a
-    # malformed font can therefore panic a worker but not corrupt memory.
-    # Revisit if either gains a security advisory or a maintained fork appears.
-    "RUSTSEC-2026-0192",
-    "RUSTSEC-2026-0206",
-]
+# Empty, and it should stay that way.
+#
+# It used to hold RUSTSEC-2026-0192 and -0206, the unmaintained notices against
+# `ttf-parser` and `rustybuzz`, with a note saying no maintained pure-Rust
+# replacement existed. That was wrong when it was written: harfrust is the
+# rustybuzz author's own successor. The shaper moved and both entries stopped
+# matching anything, which is how a suppression should end.
+#
+# An ignore that no longer matches is worse than no ignore at all: it suppresses
+# nothing today and quietly suppresses whatever reuses the id tomorrow. Delete
+# them when they stop matching rather than leaving them as history.
+ignore = []
 
 [sources]
 unknown-registry = "deny"

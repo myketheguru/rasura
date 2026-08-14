@@ -14,7 +14,9 @@ description = "Font parsing, metrics, shaping and glyph injection for Rasura"
 
 [dependencies]
 rasura-cos.workspace = true
-rustybuzz = "0.20.1"
+# The shaper. A HarfBuzz port, like rustybuzz before it, but maintained and
+# built on `read-fonts` rather than dragging in a second font parser.
+harfrust = "0.13.0"
 thiserror.workspace = true
 unicode-script = "0.5.8"
 # Needed for the /ToUnicode CMap parser, so an injection extends the existing
