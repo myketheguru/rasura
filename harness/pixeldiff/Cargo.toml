@@ -7,6 +7,11 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 publish = false
+# Adding the `golden` binary made `cargo run -p rasura-pixeldiff` ambiguous, and
+# fourteen call sites across CI were written before there was anything to be
+# ambiguous about. Naming the default here fixes all of them at once and keeps
+# those lines saying what they mean; `golden` is asked for by name.
+default-run = "pixeldiff"
 
 # pdfium is a **test-only** reference renderer, per spec 4.2: "PDFium may be
 # used as a test-only reference renderer for the pixel-diff harness; it is never
