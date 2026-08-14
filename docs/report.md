@@ -216,7 +216,10 @@ purpose.
 | 7.5 Block and column detection | ● | recursive XY-cut with a fallback |
 | 7.6 Paragraph and style reconstruction | ● | alignment, leading, indents, hyphenation reported not assumed |
 | 7.7 Tables, headers, footers | ● | detection; restructuring declines — see §5 below |
-| 7.8 Document model | ● | reading order 89.8% concordant against tagged documents |
+| 7.8 Document model | ● | reading order 89.8% concordant against tagged documents, **n = 50** |
+| 7.8 Vector provenance, clipping, shading | ● | paths, colours, patterns, operator spans and the clip; `sh` modelled; clip approximation reported |
+| 7.8 Frame inference | ● | `rasura_layout::frames`; 99.6% containment, median tightness 1.01 over 628 corpus files |
+| 7.8 Flow model, layout engine, emission | ● | `rasura_flow::layout` and `::emit`; I8 holds through a written, re-opened file |
 
 ### §8 Font layer
 
@@ -244,13 +247,10 @@ purpose.
 | 9.2 Page insert, delete, reorder | ● | with §10.9 navigation fix-up |
 | 9.2 `set_cell` | ● | |
 | 9.2 Structural table operations | ✕ | needs a producer-declared structure; declines by name |
-| 7.8 Vector provenance, clipping, shading | ● | paths, colours, patterns, operator spans and the clip; `sh` modelled; clip approximation reported |
 | 9.2 `move_vector` | ◐ | wraps the whole path; declines when its operators are interleaved. Not on the facade or JS |
-| 12.5 Annotations read into the model | ● | `rasura-layout::annots`, with `/V` inherited up the field tree |
-| 7.8 Frame inference | ● | `rasura_layout::frames`; 99.6% containment, median tightness 1.01 over 628 corpus files |
-| Document mode: layout engine and PDF emission | ● | `rasura_flow::layout` and `::emit`; I8 holds through a written, re-opened file |
 | 9.2 **Composition from nothing** | ● | `rasura_flow::compose`, `Document::create`, `Pdf.create`. Page geometry, columns, pagination, keep-with-next |
 | 9.2 Composition: tables, lists, figures | ◐ | placed as their text; counted in `approximated` rather than dropped |
+| 9.2 Composition: more than one face | ○ | one embedded font per document; bold and italic need a second and third |
 | 9.2 `set_style`, `insert_paragraph`, `set_z_order` | ○ | |
 | 9.3 Greedy line breaking | ● | the default, and a fidelity decision |
 | 9.3 Knuth–Plass | ● | opt-in; no hyphenation |
@@ -275,6 +275,7 @@ purpose.
 | 10.6 Redaction, 7 of 9 steps | ● | invariant I7; verification is a public API |
 | 10.6 Steps 2 and 6 | ○ | image data and font-subset glyphs; **reported on every redaction** |
 | 10.7 Annotations | ● | 17 subtypes read/deleted; created where geometry determines appearance |
+| 10.7 Annotations read into the model | ● | `rasura_layout::annots`, with `/V` inherited up the field tree |
 | 10.8 Flattening | ● | invokes the existing `/AP`, never re-renders `/V` |
 | 10.9 Navigation structures | ● | `/A` `/D` actions included, which outnumber `/Dest` 3.6 : 1 |
 
@@ -371,8 +372,14 @@ other people's files under other people's licences.
 | I5 undo exactness | 763 | 0 | 249 |
 | I6 tag integrity | 50 | 0 | 962 |
 | I7 redaction completeness | 329 | 0 | 683 |
+| I8 model stability | 820 | 0 | 192 |
 | §10.9 destinations resolve | 199 | 0 | 813 |
 | Object round-trip | 1,012 | 0 | 0 |
+
+I8 is model stability: build the flow model, lay it out, write a PDF, reopen it,
+build the model again, and compare. It was cited for composition before it
+appeared here, which made it a claim with no number behind it. Its 192 skips are
+files with no reconstructable text, where there is no model to be stable.
 
 **Every skip is itemised with its reason.** A suite that reports green for
 checks it did not run is worse than no suite. I5's 249 skips are 140
@@ -446,7 +453,9 @@ worse than declining.
 | Structural table operations | They move content on a grid that was *inferred*. A misdetected column edge becomes a visibly broken table. Needs `/StructTreeRoot` table elements. |
 | Flattening optional content | The decision depends on a configuration the viewer owns and the user can change after saving. |
 | Enforcing `/P` permission bits | Reported, never enforced. Enforcement in a library whose source you can read is theatre. |
-| Composite and CFF font injection | Named individually rather than half-built. |
+| CFF font embedding | A `/FontFile3` with an OpenType subtype is a different stream and a different subsetter. Declined by name rather than written into a `/FontFile2`, which would pass every structural check and render nothing. |
+| Composite font *injection* | Adding a glyph to a Type0 font a document already embeds. The `/W` array, `/CIDToGIDMap` and the descendant's own subset all have to agree, and getting one wrong silently shifts every glyph after it. |
+| Composite font *embedding* | **Not refused.** Composition writes a `/Type0` font with `/Identity-H` whenever the text needs one, which is a different operation from injection: there is no existing font to agree with. |
 
 Each refusal is a named error at the call site, not a silent no-op. A caller
 discovers the limit where they hit it, and the message says what would make the

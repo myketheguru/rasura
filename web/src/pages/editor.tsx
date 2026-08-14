@@ -74,7 +74,7 @@ export default function Editor() {
   const [pages, setPages] = React.useState<(PageModel | null)[]>([])
   const [pageIndex, setPageIndex] = React.useState(0)
   const page = pages[pageIndex] ?? null
-  const [selected, setSelected] = React.useState<Paragraph | null>(null)
+  const [selected, setSelected] = React.useState<{ page: number; paragraph: Paragraph } | null>(null)
   const [floor, setFloor] = React.useState('overlaid')
   const [session, setSession] = React.useState({ staged: 0, canUndo: false, canRedo: false })
   const [log, setLog] = React.useState<LogEntry[]>([])
@@ -254,8 +254,13 @@ export default function Editor() {
   // screen: the stage scrolls continuously and page two is directly under page
   // one rather than behind a button.
   React.useEffect(() => {
-    pages.forEach((p, i) => drawPage(canvasRefs.current[i], p, i === pageIndex ? selected : null))
-  }, [pages, selected, pageIndex, drawPage])
+    // Drawn on the page it was made on, not on whichever page is in view.
+    // Keying it to pageIndex meant scrolling moved the selection box onto the
+    // next page, over a paragraph nobody had chosen.
+    pages.forEach((p, i) =>
+      drawPage(canvasRefs.current[i], p, selected?.page === i ? selected.paragraph : null),
+    )
+  }, [pages, selected, drawPage])
 
   // Which page is being read, from what is actually in view. The one covering
   // the middle of the viewport wins; using the topmost visible page makes the
@@ -448,7 +453,7 @@ export default function Editor() {
               const out = run('Annotate', (m, h) =>
                 m.addAnnotation(h, pageIndex, {
                   kind: 'Square',
-                  rect: selected.box,
+                  rect: selected.paragraph.box,
                   colour: [0.85, 0.2, 0.2],
                   borderWidth: 1.5,
                   contents: 'Flagged in Rasura Studio',
@@ -556,7 +561,7 @@ export default function Editor() {
                     if (!hit) return
                     setPageIndex(i)
                     const p = paragraphAt(hit.model, hit.x, hit.y)
-                    setSelected(p)
+                    setSelected(p ? { page: i, paragraph: p } : null)
                     if (!p && imageAt(hit.model, hit.x, hit.y)) {
                       setStatus({ text: 'image selected', state: 'idle' })
                     }
@@ -585,7 +590,7 @@ export default function Editor() {
         <Inspector
           info={info}
           page={page}
-          selected={selected}
+          selected={selected?.paragraph ?? null}
           log={log}
           saved={saved}
           wasm={wasm}
