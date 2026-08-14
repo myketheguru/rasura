@@ -39,13 +39,12 @@ export function Shell() {
 
         <nav className="hidden items-center gap-1 sm:flex">
           {[
-            { to: '/', label: 'Documentation' },
+            { to: '/introduction', label: 'Documentation' },
             { to: '/editor', label: 'Editor' },
           ].map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
-              end={item.to === '/'}
               className={({ isActive }) =>
                 cn(
                   'rounded-md px-2.5 py-1.5 text-[13px] font-medium no-underline transition-colors',

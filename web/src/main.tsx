@@ -22,6 +22,7 @@ import {
 import { Architecture, Types } from '@/pages/docs/reference'
 import RustApi from '@/pages/docs/rust-api'
 import Editor from '@/pages/editor'
+import Landing from '@/pages/landing'
 import { structuredData } from '@/seo'
 import './index.css'
 
@@ -34,11 +35,14 @@ const router = createBrowserRouter([
   {
     element: <Shell />,
     children: [
+      // The root is the landing page, full width and without the docs
+      // furniture. `/introduction` is the same argument at reading pace, and
+      // is where the sidebar starts.
+      { index: true, element: <Landing /> },
       { path: '/editor', element: <Editor /> },
       {
         element: <DocsLayout />,
         children: [
-          { index: true, element: <Introduction /> },
           { path: 'introduction', element: <Introduction /> },
           { path: 'install', element: <Install /> },
           { path: 'quickstart', element: <Quickstart /> },

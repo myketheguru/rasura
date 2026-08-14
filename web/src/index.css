@@ -184,6 +184,92 @@
   }
 }
 
+/* --- landing --------------------------------------------------------------
+ *
+ * The hero animation is the product's own mechanism: a content stream on one
+ * side, the paragraph recovered from it on the other, and a line that travels
+ * between them. A palimpsest is a scraped parchment, so the line scrapes.
+ *
+ * Two elements animate on one timeline rather than one element driving both
+ * through a custom property: identical duration, easing and delay keep the
+ * clip edge and the visible line on the same pixel without @property support.
+ */
+@keyframes scrape-reveal {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+@keyframes scrape-line {
+  from {
+    transform: translateX(0);
+    opacity: 0;
+  }
+  8% {
+    opacity: 1;
+  }
+  92% {
+    opacity: 1;
+  }
+  to {
+    transform: translateX(var(--scrape-travel, 100%));
+    opacity: 0;
+  }
+}
+
+.scrape-reveal {
+  animation: scrape-reveal 2.4s cubic-bezier(0.65, 0, 0.35, 1) 0.45s both;
+}
+
+.scrape-line {
+  animation: scrape-line 2.4s cubic-bezier(0.65, 0, 0.35, 1) 0.45s both;
+}
+
+/* Sections arrive as they are scrolled to. The observer adds `data-shown`;
+ * without JavaScript the content is visible, because a reveal that depends on
+ * a script is a blank page when the script does not run. */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+[data-reveal][data-shown='true'] {
+  animation: rise 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* The page grid behind the hero: a ruled sheet, faint enough to read as paper
+ * rather than as a graph. */
+.ruled {
+  background-image:
+    linear-gradient(to right, hsl(var(--border) / 0.5) 1px, transparent 1px),
+    linear-gradient(to bottom, hsl(var(--border) / 0.5) 1px, transparent 1px);
+  background-size: 3rem 3rem;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 20%, transparent 75%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scrape-reveal,
+  .scrape-line,
+  [data-reveal][data-shown='true'] {
+    animation: none;
+  }
+  .scrape-reveal {
+    clip-path: none;
+  }
+  .scrape-line {
+    opacity: 0;
+  }
+}
+
 /* --- prose ----------------------------------------------------------------
  *
  * The documentation's reading column. Written out rather than pulled from a

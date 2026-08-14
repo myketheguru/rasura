@@ -175,9 +175,9 @@ bytes ← incremental append ← patched streams ← reflowed runs`}</Code>
 
       <H2 id="verification">How it is checked</H2>
       <ul>
-        <li><strong>1,192 unit tests</strong> and 41 JavaScript tests.</li>
+        <li><strong>1,196 unit tests</strong> and 41 JavaScript tests.</li>
         <li>
-          <strong>1,026 real PDFs</strong>, mostly the pdf.js regression suite, run through
+          <strong>1,030 real PDFs</strong>, mostly the pdf.js regression suite, run through
           eight invariants on every build. Skips are itemised with reasons rather than
           counted as passes.
         </li>

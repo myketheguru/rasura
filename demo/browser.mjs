@@ -49,6 +49,11 @@ const PAGES = [
   ['editor', 'editor'],
 ];
 
+/** Whether a URL is the editor route, which is the only one that loads the
+ *  module. Matched on the path, because the routes stopped being hash
+ *  fragments and the old `#/editor` test silently matched nothing. */
+const isEditor = (url) => /\/editor\/?$/.test(new URL(url).pathname);
+
 const CHROME = [
   process.env.CHROME_PATH,
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -141,9 +146,18 @@ const portFile = join(profile, 'DevToolsActivePort');
 const started = Date.now();
 let port = null;
 while (!port && Date.now() - started < 30_000) {
+  // The file exists before it is finished. On Windows, opening it while Chrome
+  // still holds it fails with EBUSY, which crashed the run perhaps one time in
+  // three -- a check that fails at random teaches its reader to rerun it, and a
+  // rerun is how a real failure gets waved through. Existence is the invitation
+  // to try, not the guarantee it will work; the loop already handles waiting.
   if (existsSync(portFile)) {
-    const first = readFileSync(portFile, 'utf8').split('\n')[0].trim();
-    if (first) port = first;
+    try {
+      const first = readFileSync(portFile, 'utf8').split('\n')[0].trim();
+      if (first) port = first;
+    } catch {
+      // Still being written. Fall through to the sleep and try again.
+    }
   }
   if (!port) await new Promise((r) => setTimeout(r, 100));
 }
@@ -246,7 +260,14 @@ async function load(url) {
       // The docs route never loads the module, so it settles as soon as its
       // content is on the page. Waiting for a version it will never show would
       // spend the whole timeout on a page that was ready immediately.
-      const isDocs = !url.includes('#/editor');
+      //
+      // This tested `url.includes('#/editor')` after the routes stopped being
+      // hash fragments, so it was true for every page: the editor was allowed
+      // to settle the moment it had five headings, which is before the module
+      // has answered. It passed anyway while the editor rendered fewer than
+      // five, and started failing when it rendered more, which made a harness
+      // fault look like a regression in the page.
+      const isDocs = !isEditor(url);
       if (state.fatal !== null || (isDocs && state.headings >= 5) || (started && opened)) break;
       await new Promise((r2) => setTimeout(r2, 250));
     }
