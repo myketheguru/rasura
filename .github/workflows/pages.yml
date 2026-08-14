@@ -90,6 +90,12 @@ jobs:
         env:
           RASURA_BASE: /rasura/
 
+      # robots.txt, sitemap.xml and llms.txt, generated from the same nav list
+      # the router uses so a new page cannot be missing from either.
+      - name: Generate crawler and model assets
+        run: node scripts/seo.mjs
+        working-directory: web
+
       # And then actually load it. Everything above this line once passed on a
       # page that had never started in a browser, so nothing deploys that has
       # not been watched compile the module and read a document. Chrome is
