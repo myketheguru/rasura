@@ -16,7 +16,17 @@ publish = false
 [dependencies]
 pdfium-render = "0.9"
 image = { version = "0.25", default-features = false, features = ["png"] }
+# The golden check composes its own document rather than being handed one, so
+# that the reference covers the composition path end to end and not a PDF
+# someone remembered to regenerate.
+rasura-cos.workspace = true
+rasura-flow.workspace = true
+rasura-layout.workspace = true
 
 [[bin]]
 name = "pixeldiff"
 path = "src/main.rs"
+
+[[bin]]
+name = "golden"
+path = "src/bin/golden.rs"

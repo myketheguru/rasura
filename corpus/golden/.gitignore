@@ -1,0 +1,4 @@
+﻿# The reference images are committed. Everything else here is regenerated on
+# every run and would only ever be committed by accident.
+*.pdf
+*.actual.png

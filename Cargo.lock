@@ -686,6 +686,9 @@ version = "0.1.1"
 dependencies = [
  "image",
  "pdfium-render",
+ "rasura-cos",
+ "rasura-flow",
+ "rasura-layout",
 ]
 
 [[package]]

@@ -385,6 +385,21 @@ jobs:
       # not that two files match but that pdfium can render this one at all, and
       # the harness reports where the ink ends. A font that embedded wrongly
       # renders a blank page, and a blank page has no ink to report.
+      # And that it renders the *same* as last time. pdfium saying there is ink
+      # and pdf.js saying the text reads back are both true of a page whose
+      # typesetting has silently changed, which is how three keep-with-next
+      # bugs and a float comparison all shipped green.
+      - name: The composed pages match their references
+        run: cargo run --release -p rasura-pixeldiff --bin golden -- corpus/golden
+
+      - name: Keep the diff when they do not
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-diff
+          path: corpus/golden/*.png
+          if-no-files-found: ignore
+
       - name: pdfium renders what was composed
         run: |
           set -eu
