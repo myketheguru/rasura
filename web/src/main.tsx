@@ -1,6 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { createHashRouter, RouterProvider } from 'react-router-dom'
+import { createBrowserRouter, RouterProvider } from 'react-router-dom'
 import { TooltipProvider } from '@/components/ui/primitives'
 import { ThemeProvider } from '@/components/theme'
 import { Shell } from '@/components/shell'
@@ -19,15 +19,18 @@ import {
   Redaction,
   Saving,
 } from '@/pages/docs/guides'
-import { Architecture, Rust, Types } from '@/pages/docs/reference'
+import { Architecture, Types } from '@/pages/docs/reference'
+import RustApi from '@/pages/docs/rust-api'
 import Editor from '@/pages/editor'
+import { structuredData } from '@/seo'
 import './index.css'
 
-// A hash router, not a browser one. GitHub Pages serves static files and has no
-// rewrite rule, so a reload on /editor asks for a file that is not there and
-// gets a 404. The alternative is a 404.html that redirects, which works and
-// which nobody reading the deploy can see the reason for.
-const router = createHashRouter([
+// Real paths, not hash fragments. Pages has no rewrite rule, so a reload on
+// /editor asks the server for a file that is not there; public/404.html hands
+// the request back to this router. The hash form worked and cost the site its
+// search presence: every route shared one URL, so there was one page to index
+// and no way to link to any part of the documentation.
+const router = createBrowserRouter([
   {
     element: <Shell />,
     children: [
@@ -51,7 +54,7 @@ const router = createHashRouter([
           { path: 'errors', element: <Errors /> },
           { path: 'api', element: <Api /> },
           { path: 'types', element: <Types /> },
-          { path: 'rust', element: <Rust /> },
+          { path: 'rust', element: <RustApi /> },
           { path: 'architecture', element: <Architecture /> },
           // Anything unrecognised is the introduction rather than a dead end.
           { path: '*', element: <Introduction /> },
@@ -59,7 +62,14 @@ const router = createHashRouter([
       },
     ],
   },
-])
+], { basename: import.meta.env.BASE_URL })
+
+// Injected once. A crawler that runs scripts finds it; one that does not has
+// llms.txt and the meta tags in the HTML.
+const ld = document.createElement('script')
+ld.type = 'application/ld+json'
+ld.textContent = JSON.stringify(structuredData())
+document.head.append(ld)
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

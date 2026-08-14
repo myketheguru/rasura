@@ -3,6 +3,7 @@ import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { ArrowLeft, ArrowRight, Menu, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { GROUPS, neighbours } from '@/nav'
+import { applyMeta } from '@/seo'
 import { cn } from '@/lib/utils'
 
 /** Headings a page registers so the right rail can list them. */
@@ -36,7 +37,8 @@ export function DocsLayout() {
   React.useEffect(() => {
     setOpen(false)
     window.scrollTo(0, 0)
-  }, [pathname])
+    applyMeta(slug)
+  }, [pathname, slug])
 
   return (
     <div className="mx-auto flex w-full max-w-[90rem] flex-1 gap-8 px-4 sm:px-6">

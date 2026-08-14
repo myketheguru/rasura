@@ -1,0 +1,19 @@
+﻿<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Rasura</title>
+    <script>
+      // GitHub Pages serves this for any path it has no file for. The router in
+      // index.html can handle the path perfectly well, so hand it over rather
+      // than showing a 404: rewrite the URL and load the app.
+      //
+      // sessionStorage rather than a query string, so the address bar never
+      // shows the redirect and the canonical URL stays the one the user asked
+      // for.
+      sessionStorage.setItem('rasura:redirect', location.pathname + location.search + location.hash)
+      location.replace('/rasura/')
+    </script>
+  </head>
+  <body></body>
+</html>

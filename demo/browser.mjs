@@ -41,9 +41,12 @@ if (!ORIGIN && !existsSync(join(DIST, 'index.html'))) {
 
 // The pages to load. A hash router means the editor is a fragment of the same
 // document, so both are checked from one server.
+// Real paths now, not hash fragments. `editor` is also the deep-link case: the
+// server has no file at that path and must hand the request to the application,
+// which is exactly what Pages does with 404.html.
 const PAGES = [
   ['docs', ''],
-  ['editor', '#/editor'],
+  ['editor', 'editor'],
 ];
 
 const CHROME = [
@@ -98,7 +101,11 @@ const server = ORIGIN
       let url = decodeURIComponent(req.url.split('?')[0]);
       if (BASE !== '/' && url.startsWith(BASE)) url = url.slice(BASE.length - 1);
       const rel = normalize(url).replace(/^[/\\]+/, '');
-      const path = join(DIST, rel === '' ? 'index.html' : rel);
+      let path = join(DIST, rel === '' ? 'index.html' : rel);
+      // A path with no file is a route, not a miss. Pages does this through
+      // 404.html; serving index.html here is the same handoff and keeps the
+      // check honest about deep links.
+      if (!existsSync(path) && !rel.includes('.')) path = join(DIST, 'index.html');
       if (!path.startsWith(normalize(DIST)) || !existsSync(path)) {
         res.writeHead(404).end('not found');
         return;

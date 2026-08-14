@@ -40,7 +40,7 @@ export const GROUPS: Group[] = [
     entries: [
       { slug: 'api', title: 'JavaScript API', summary: 'Every class, method, option and return type.' },
       { slug: 'types', title: 'Types', summary: 'The shape of everything that crosses the boundary.' },
-      { slug: 'rust', title: 'Rust API', summary: 'The crate layering and the facade.' },
+      { slug: 'rust', title: 'Rust API', summary: 'Every item on the facade, with signatures and errors.' },
       { slug: 'architecture', title: 'How it works', summary: 'Bytes to model to bytes, and why each layer exists.' },
     ],
   },

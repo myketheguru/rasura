@@ -3,11 +3,40 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Rasura — true PDF editing in the browser</title>
+    <title>Rasura: true PDF editing in the browser</title>
     <meta
       name="description"
       content="A browser-native SDK that reads a PDF as paragraphs and blocks, edits it, and writes it back with the untouched bytes intact. Rust, compiled to WebAssembly."
     />
+    <link rel="canonical" href="https://myketheguru.github.io/rasura/" />
+    <meta name="theme-color" content="#128a5a" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Rasura" />
+    <meta property="og:title" content="Rasura: true PDF editing in the browser" />
+    <meta
+      property="og:description"
+      content="Reconstructs a PDF into paragraphs and blocks, edits them, and writes the file back with the untouched bytes byte-identical. Runs client-side as WebAssembly."
+    />
+    <meta property="og:url" content="https://myketheguru.github.io/rasura/" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Rasura: true PDF editing in the browser" />
+    <meta
+      name="twitter:description"
+      content="Reconstructs a PDF into paragraphs and blocks, edits them, and writes the file back with the untouched bytes byte-identical."
+    />
+
+    <!-- The router needs the path the 404 handler saved before React mounts, or
+         a deep link lands on the introduction instead of the page asked for. -->
+    <script>
+      try {
+        var r = sessionStorage.getItem('rasura:redirect')
+        if (r) {
+          sessionStorage.removeItem('rasura:redirect')
+          history.replaceState(null, '', r)
+        }
+      } catch (e) {}
+    </script>
     <script>
       // Before first paint, or the page flashes light and then corrects itself.
       // Inline and tiny for the same reason: a deferred module would run after
