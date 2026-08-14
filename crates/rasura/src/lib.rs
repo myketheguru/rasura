@@ -96,7 +96,7 @@ pub mod forms {
 
 /// Redaction and its verification. Spec 9.6.
 pub mod redaction {
-    pub use rasura_edit::redact::{Report, Trace};
+    pub use rasura_edit::redact::{Options, Report, Trace};
 }
 
 /// Encryption, for documents this library creates or re-keys. Spec 5.
@@ -325,8 +325,35 @@ impl Document {
     ///
     /// Returns the strings removed, for [`verify_redaction`].
     pub fn redact(&mut self, text: &str) -> Result<Vec<String>> {
-        let redaction = rasura_edit::redact::apply(&mut self.inner, text)
-            .map_err(|e| Error::from_layer(Code::Malformed, "the redaction was refused", e))?;
+        self.redact_with(text, &rasura_edit::redact::Options::default())
+    }
+
+    /// Redact, choosing what to do about images that overlap the text.
+    ///
+    /// By default an overlapping image **refuses** the whole redaction. Image
+    /// data is not searched (§10.6 step 2), so a scan of the same words survives
+    /// the removal, and the caller who most wants redaction is the least likely
+    /// to be reading a field in a return value for that news. Passing
+    /// `allow_incomplete` moves the decision to the call site, where it is
+    /// visible in review.
+    pub fn redact_with(
+        &mut self,
+        text: &str,
+        opts: &rasura_edit::redact::Options,
+    ) -> Result<Vec<String>> {
+        use rasura_edit::redact::RedactError;
+        let redaction =
+            rasura_edit::redact::apply_with(&mut self.inner, text, opts).map_err(|e| match e {
+                // Its own code, because the caller's response differs: this one
+                // is answerable by passing a flag or rasterising the region,
+                // and every other redaction failure is not.
+                RedactError::ImageOverlap { .. } => Error::from_layer(
+                    Code::FidelityBelowRequired,
+                    "an image overlaps the text and image data is not searched",
+                    e,
+                ),
+                other => Error::from_layer(Code::Malformed, "the redaction was refused", other),
+            })?;
         Ok(redaction.strings)
     }
 

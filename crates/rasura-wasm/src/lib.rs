@@ -532,12 +532,22 @@ pub fn flatten_forms(handle: u32, page_index: usize) -> Result<JsValue, JsValue>
 /// rewrite, which cannot be undone by restoring bytes the way a staged edit can.
 /// Returns the strings actually found and removed, so a caller can tell
 /// "redacted three occurrences" from "found nothing".
+/// llowIncomplete opts past the refusal an overlapping image otherwise
+/// produces. Image data is not searched, so a scan of the same words survives
+/// the removal; the flag makes that the caller's decision at the call site
+/// rather than a field in a result nobody reads.
 #[wasm_bindgen(js_name = redactText)]
-pub fn redact_text(handle: u32, text: &str) -> Result<JsValue, JsValue> {
+pub fn redact_text(
+    handle: u32,
+    text: &str,
+    allow_incomplete: Option<bool>,
+) -> Result<JsValue, JsValue> {
     OPEN.with(|r| {
         let mut registry = r.borrow_mut();
         let slot = registry.documents.get_mut(&handle).ok_or_else(|| missing(handle))?;
-        let removed = slot.doc.redact(text).map_err(convert::from_error)?;
+        let opts =
+            rasura::redaction::Options { allow_incomplete: allow_incomplete.unwrap_or(false) };
+        let removed = slot.doc.redact_with(text, &opts).map_err(convert::from_error)?;
         Ok(convert::strings(removed.into_iter()))
     })
 }

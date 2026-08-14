@@ -180,7 +180,7 @@ export async function handle(request) {
       // forces a full rewrite or re-keys every object, neither of which can be
       // undone by restoring bytes the way a staged edit can.
       case "redact":
-        return { result: m.redactText(args[0], args[1]), transfer: [] };
+        return { result: m.redactText(args[0], args[1], args[2]), transfer: [] };
 
       case "verifyRedaction":
         return { result: m.verifyRedaction(args[0], args[1]), transfer: [] };

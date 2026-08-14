@@ -533,7 +533,19 @@ export class Document {
    * undo stack that kept the bytes for you would defeat the purpose. Resolves
    * to the strings actually found.
    */
-  redact(text: string): Promise<readonly string[]>;
+  redact(
+    text: string,
+    opts?: {
+      /**
+       * Redact the text layer even where an image overlaps it.
+       *
+       * Without this, an overlapping image **refuses** the whole redaction:
+       * image data is not searched, so a scan of the same words survives the
+       * removal untouched. Setting it puts that decision at the call site.
+       */
+      allowIncomplete?: boolean
+    },
+  ): Promise<readonly string[]>;
   /**
    * Search saved bytes for text that should no longer be there. Spec 9.6.
    *

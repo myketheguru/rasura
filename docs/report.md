@@ -273,7 +273,8 @@ purpose.
 | 10.4 `resample_image` | ○ | the only piece needing a pixel codec |
 | 10.5 Vector content | ◐ | detected and preserved; no provenance to move a path by |
 | 10.6 Redaction, 7 of 9 steps | ● | invariant I7; verification is a public API |
-| 10.6 Steps 2 and 6 | ○ | image data and font-subset glyphs; **reported on every redaction** |
+| 10.6 Step 2, image data | ○ | needs a pixel codec, so an overlapping image **refuses the redaction** unless `allow_incomplete` is set |
+| 10.6 Step 6, font-subset glyphs | ○ | reported on every redaction; exotic but has been used for real de-anonymisation |
 | 10.7 Annotations | ● | 17 subtypes read/deleted; created where geometry determines appearance |
 | 10.7 Annotations read into the model | ● | `rasura_layout::annots`, with `/V` inherited up the field tree |
 | 10.8 Flattening | ● | invokes the existing `/AP`, never re-renders `/V` |
@@ -321,7 +322,7 @@ purpose.
 | 14 Corpus, invariants, fuzzing, cross-viewer | ● | see §4 below |
 | 14 Browser verification | ● | headless Chrome over the DevTools protocol, both routes, before every deploy |
 | 15 Repository layout | ● | |
-| 16 Documentation deliverables | ◐ | this file, `spec-coverage.md`, `flow-model.md`, two Q write-ups, two READMEs; no tutorial or API reference site |
+| 16 Documentation deliverables | ● | this file, `spec-coverage.md`, `flow-model.md`, two Q write-ups, two READMEs, and a seventeen-page documentation site with a JavaScript and a Rust API reference |
 
 ---
 
@@ -623,7 +624,7 @@ suppressed.
 | Lazy chunk splitting | §12.3 | One chunk today. `fonts` should load on the first shaping edit. |
 | Threaded build | §12.1 | **Blocked, not pending.** It is a second artefact with `SharedArrayBuffer`; the single-threaded package had to exist first. Now it can be started. |
 | `resample_image` | §10.4 | Needs a pixel codec — the one piece that does. |
-| Redaction steps 2 and 6 | §10.6 | Image data and font-subset glyphs. Reported on every redaction. |
+| Redaction steps 2 and 6 | §10.6 | Image data now refuses rather than reports. Font-subset glyphs still report. |
 | Font substitution wired to editing | §8.5, §11.4 | The matcher exists; the `substituted` rung is never produced. |
 | `set_style`, `insert_paragraph`, `set_z_order` | §9.2 | |
 | Vector path provenance | §10.5 | Nothing to move a path *by*. |
@@ -641,11 +642,18 @@ suppressed.
   pdf.js and pdfium opening a `/R` 6 file we wrote is independent — but a `/R` 6
   file from a real producer would still be worth having.
 - **No long fuzzing campaign** has been run, only the CI smoke.
-- **`rustybuzz` and `ttf-parser` are unmaintained** (RUSTSEC-2026-0192/0206).
-  Accepted with a documented rationale: they are §8.3's shaping engine, there is
-  no maintained pure-Rust replacement, and the alternative is HarfBuzz, which
-  §4.2 forbids. Both forbid `unsafe`, and the font layer is fuzzed, so a
-  malformed font can panic a worker but not corrupt memory.
+- **`rustybuzz` and `ttf-parser` are unmaintained** (RUSTSEC-2026-0192/0206),
+  and **there is a replacement**. An earlier version of this caveat said there
+  was not. That was wrong: the rustybuzz maintainer has declared the crate
+  unmaintained and points to **harfrust**, now part of the HarfBuzz project, and
+  harfrust was forked from rustybuzz specifically to move from `ttf-parser` to
+  `read-fonts` so that consumers stop shipping two font parsers. That is this
+  project's exact situation, and the sentence claiming otherwise shipped in a
+  published document, which is worse than the advisory it was excusing.
+
+  Migration is planned and not done. Until it is: both crates forbid `unsafe`
+  and the font layer is fuzzed, so a malformed font can panic a worker but not
+  corrupt memory. That is a mitigation, not a rationale.
 - **Published, and verified from the registry.** Seven crates on crates.io and
   `rasura@0.1.0` on npm, all at 0.1.0. The npm package was then installed from
   the registry into an empty directory with `--ignore-scripts` and used to edit a
@@ -681,7 +689,7 @@ was wrong about *why*; see §6. Write-up:
 **Q6 — the bundle floor.** The object layer is 123 KB gzipped as WASM. The whole
 `core` chunk — cos, content, layout, font, rustybuzz, ttf-parser and every
 generated table — is 413 KB, 45.9% of budget. The shipped module with the API on
-top is 419 KB. The module split in §12.3 stands. Write-up:
+top is 448.8 KB. The module split in §12.3 stands. Write-up:
 [q6-bundle-floor.md](q6-bundle-floor.md).
 
 Q2 through Q5 have not been measured.
@@ -744,7 +752,7 @@ RASURA_DEMO_ORIGIN=https://myketheguru.github.io/rasura node demo/browser.mjs
 
 The site's JavaScript is not counted against §12.3's budget and should not be:
 the budget is about what a *caller* ships when they install the package, and none
-of React reaches them. The module the site loads is the same 419 KB artefact the
+of React reaches them. The module the site loads is the same 448.8 KB artefact the
 gate measures.
 
 A subset is worth its own line, because it is the number that decides whether

@@ -240,13 +240,24 @@ export class Document {
    * Any open session is invalidated: its recorded spans address a byte layout
    * that no longer exists.
    *
+   * Refuses when an image overlaps the text, because image data is not
+   * searched: a scan of the same words survives the removal untouched. Pass
+   * `{ allowIncomplete: true }` to redact the text layer anyway, which puts
+   * that decision at the call site where a reviewer can see it rather than in
+   * a field of a result nobody reads.
+   *
    * @param {string} text
+   * @param {{ allowIncomplete?: boolean }} [opts]
    * @returns {Promise<string[]>}
    */
-  async redact(text) {
+  async redact(text, opts = {}) {
     this._live();
     this._info = null;
-    return await this._transport.request("redact", [this._handle, text]);
+    return await this._transport.request("redact", [
+      this._handle,
+      text,
+      opts.allowIncomplete === true,
+    ]);
   }
 
   /**

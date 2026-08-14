@@ -23,7 +23,7 @@
 //! | Step | State |
 //! |---|---|
 //! | 1. Remove glyph-showing operators over the region | **yes** |
-//! | 2. Remove intersecting image data | **no** — needs a pixel codec |
+//! | 2. Remove intersecting image data | **no** — needs a pixel codec, so an overlapping image **refuses** the redaction |
 //! | 3. Annotations, form field values, link targets | **yes** |
 //! | 4. Strip `/ActualText` and `/Alt` | **yes** |
 //! | 5. Purge from `/Info` and XMP | **yes** |
@@ -39,6 +39,14 @@
 //!
 //! [`verify`] reports what it *checked*, so a caller can tell the difference
 //! between "no trace found" and "no trace found in the places we looked".
+//!
+//! **Step 2 refuses rather than reports.** Reporting it was the original
+//! design and it was not enough: image data is not searched, so a scan of the
+//! same words survives the removal, and the caller who most wants redaction is
+//! the least likely to be reading a field in a return value for that news. An
+//! image overlapping the text now fails the whole operation unless
+//! [`Options::allow_incomplete`] says otherwise, which moves the decision to
+//! the call site where a reviewer can see it.
 //!
 //! **Step 6 is the subtle one.** A subset font's glyph inventory leaks the
 //! alphabet a document used: removing the word `Wolfgang` from a page whose
@@ -81,8 +89,68 @@ pub enum RedactError {
     #[error("the text spans {runs} showing operators; only one at a time is supported")]
     Fragmented { runs: usize },
 
+    /// The text sits under or beside an image, and image data is not searched.
+    ///
+    /// Reporting this was not enough. Step 2 of §10.6 is unimplemented, so a
+    /// scan of the same words survives the removal untouched, and the caller who
+    /// most wants redaction is the least likely to be reading a field in a
+    /// return value for that news. A warning in a result is swallowed by the
+    /// first caller who does not check it, and "we removed the text but not the
+    /// picture of it" creates liability rather than removing it.
+    ///
+    /// Set [`Options::allow_incomplete`] to proceed, which makes the decision
+    /// the caller's and makes it visible at the call site.
+    #[error(
+        "{count} image(s) overlap the text on page {page}, and image data is not \
+         searched; set allow_incomplete to redact the text layer only"
+    )]
+    ImageOverlap { page: usize, count: usize },
+
     #[error("{0}")]
     Cos(String),
+}
+
+/// How many images on this page overlap a paragraph containing `text`.
+///
+/// The paragraph box rather than the glyph run: a paragraph is larger than the
+/// words in it, so this errs toward refusing. For redaction that is the right
+/// direction to err in, and the caller who disagrees has `allow_incomplete`.
+///
+/// An image with an empty box is skipped. Those are images the clip excludes
+/// entirely, which are in the file but not on the page, and refusing for one
+/// would be refusing for something nobody can see.
+fn images_over_text(
+    doc: &Document,
+    page: &rasura_content::page::Page,
+    analysed: &EditablePage,
+    text: &str,
+) -> usize {
+    let boxes: Vec<_> = analysed
+        .paragraphs
+        .iter()
+        .filter(|(id, _)| analysed.text_of(*id).contains(text))
+        .map(|(_, p)| p.bbox)
+        .collect();
+    if boxes.is_empty() {
+        return 0;
+    }
+
+    rasura_layout::graphics::collect(doc, page)
+        .images
+        .iter()
+        .filter(|i| i.bbox.width() > 0.0 && i.bbox.height() > 0.0)
+        .filter(|i| boxes.iter().any(|b| b.intersect(&i.bbox).is_some()))
+        .count()
+}
+
+/// How to redact.
+#[derive(Debug, Clone, Default)]
+pub struct Options {
+    /// Redact the text layer even where an image overlaps it.
+    ///
+    /// False by default, and the default is the point: the safe answer to "is
+    /// this really gone" has to be the one a caller gets without asking for it.
+    pub allow_incomplete: bool,
 }
 
 /// What a redaction will do, before it does it.
@@ -180,6 +248,15 @@ pub fn plan(doc: &Document, page: &EditablePage, text: &str) -> Result<Redaction
 /// incremental whatever options it is given. The caller still has to save;
 /// nothing here writes bytes.
 pub fn apply(doc: &mut Document, text: &str) -> Result<Redaction, RedactError> {
+    apply_with(doc, text, &Options::default())
+}
+
+/// Redact, choosing what to do about overlapping images.
+pub fn apply_with(
+    doc: &mut Document,
+    text: &str,
+    opts: &Options,
+) -> Result<Redaction, RedactError> {
     let pages = rasura_content::page::pages(doc).map_err(|e| RedactError::Cos(e.to_string()))?;
 
     // Plan every page before touching any of them. A redaction that applied
@@ -195,6 +272,18 @@ pub fn apply(doc: &mut Document, text: &str) -> Result<Redaction, RedactError> {
         match plan(doc, &analysed, text) {
             Ok(one) => {
                 found = true;
+                // Before anything is staged. A refusal that arrived after some
+                // pages were already planned would be a partial redaction
+                // reported as a failure, which is the worst of both.
+                if !opts.allow_incomplete {
+                    let overlapping = images_over_text(doc, page, &analysed, text);
+                    if overlapping > 0 {
+                        return Err(RedactError::ImageOverlap {
+                            page: page.index,
+                            count: overlapping,
+                        });
+                    }
+                }
                 for (id, value) in one.changes {
                     if let Some(v) = value {
                         changes.insert(id, v);
@@ -782,6 +871,97 @@ mod tests {
     use crate::EditSession;
     use rasura_cos::SaveOptions;
     use rasura_cos::testutil::ClassicBuilder;
+
+    /// A page where an image is drawn over the same region as the text.
+    fn text_under_an_image() -> Vec<u8> {
+        ClassicBuilder::new()
+            .object(1, "<< /Type /Catalog /Pages 2 0 R >>")
+            .object(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+            .object(
+                3,
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R \
+                 /Resources << /Font << /F1 5 0 R >> /XObject << /Im0 6 0 R >> >> >>",
+            )
+            .stream(
+                4,
+                "",
+                b"BT /F1 12 Tf 1 0 0 1 72 700 Tm (Agent Kowalski reporting) Tj ET\n\
+                  q 300 0 0 60 60 670 cm /Im0 Do Q\n",
+            )
+            .object(5, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+            .stream(
+                6,
+                "/Type /XObject /Subtype /Image /Width 2 /Height 2 \
+                 /ColorSpace /DeviceGray /BitsPerComponent 8",
+                &[0u8, 128, 200, 255],
+            )
+            .finish("/Root 1 0 R")
+    }
+
+    #[test]
+    fn an_image_over_the_text_refuses_by_default() {
+        // §10.6 step 2 is unimplemented: image data is not searched. Reporting
+        // that in a return value put the news where the caller who most needs
+        // it is least likely to look.
+        let mut doc = Document::open(text_under_an_image()).unwrap();
+        let refused = apply(&mut doc, "Kowalski").expect_err("refused");
+        assert!(matches!(refused, RedactError::ImageOverlap { page: 0, count: 1 }), "{refused:?}",);
+
+        // And nothing was staged by the attempt. A refusal that had already
+        // planned half the document would be a partial redaction reported as a
+        // failure, which is worse than either.
+        assert!(!doc.is_dirty(), "a refused redaction must leave the document untouched");
+    }
+
+    #[test]
+    fn allow_incomplete_proceeds_and_the_text_still_goes() {
+        let mut doc = Document::open(text_under_an_image()).unwrap();
+        // `apply_with` stages everything itself, through its own session, and
+        // returns `patches` empty because there is nothing left for a caller to
+        // apply. The document is already dirty here.
+        apply_with(&mut doc, "Kowalski", &Options { allow_incomplete: true }).expect("allowed");
+        assert!(doc.is_dirty());
+
+        let saved = rasura_cos::save(&doc, &SaveOptions::default()).unwrap();
+        assert_eq!(saved.mode, rasura_cos::SaveMode::FullRewrite, "redaction forces one");
+        let report = verify(&saved.bytes, &["Kowalski".to_string()]);
+        assert!(report.traces.is_empty(), "{:?}", report.traces);
+        // And it still says where it did not look, which is now the only place
+        // that information appears for a caller who opted in.
+        assert!(!report.not_checked.is_empty());
+    }
+
+    #[test]
+    fn an_image_elsewhere_on_the_page_does_not_refuse() {
+        // The check is an overlap, not a presence. A logo in the corner of a
+        // page must not block redacting a paragraph it does not touch, or the
+        // refusal becomes noise and the flag becomes reflexive.
+        let bytes = ClassicBuilder::new()
+            .object(1, "<< /Type /Catalog /Pages 2 0 R >>")
+            .object(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+            .object(
+                3,
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R \
+                 /Resources << /Font << /F1 5 0 R >> /XObject << /Im0 6 0 R >> >> >>",
+            )
+            .stream(
+                4,
+                "",
+                b"BT /F1 12 Tf 1 0 0 1 72 700 Tm (Agent Kowalski reporting) Tj ET\n\
+                  q 60 0 0 40 60 80 cm /Im0 Do Q\n",
+            )
+            .object(5, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+            .stream(
+                6,
+                "/Type /XObject /Subtype /Image /Width 2 /Height 2 \
+                 /ColorSpace /DeviceGray /BitsPerComponent 8",
+                &[0u8, 128, 200, 255],
+            )
+            .finish("/Root 1 0 R");
+
+        let mut doc = Document::open(bytes).unwrap();
+        assert!(apply(&mut doc, "Kowalski").is_ok(), "an unrelated image must not refuse");
+    }
 
     /// A page whose text, title and an annotation all quote the same secret.
     fn document() -> Vec<u8> {
