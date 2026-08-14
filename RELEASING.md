@@ -60,9 +60,13 @@ to reuse `0.1.0`. The version is declared once in the workspace manifest.
 ## npm
 
 ```bash
-npm login              # needs your credentials
-npm publish ./js --access public
+npm login
+npm publish ./js --access public --otp=123456   # a live authenticator code
 ```
+
+npm requires two-factor authentication to publish and there is no way around it
+from a script: without `--otp` it returns 403 before uploading anything. For CI,
+create a granular access token with "bypass 2FA" enabled and use that instead.
 
 The tarball is 459 KB packed, 1.3 MB unpacked, 11 files. Verified by packing it,
 installing into an empty directory with `--ignore-scripts`, and editing a PDF
