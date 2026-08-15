@@ -365,7 +365,7 @@ pub fn rebuild(data: &[u8], font: &Sfnt, replacements: &[([u8; 4], Vec<u8>)]) ->
     // directory does not fail to parse, it fails to *find* the table, so the
     // symptom was text shaping to notdef in other people's readers while this
     // crate's own linear-scanning parser saw nothing wrong.
-    tables.sort_by(|(a, _), (b, _)| a.cmp(b));
+    tables.sort_by_key(|(tag, _)| *tag);
 
     let n = tables.len();
     let mut out = Vec::new();
