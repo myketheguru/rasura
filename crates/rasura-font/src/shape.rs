@@ -92,9 +92,7 @@ pub fn shape(font: &[u8], request: &ShapeRequest) -> Option<Vec<ShapedGlyph>> {
     let mut buffer = harfrust::UnicodeBuffer::new();
     buffer.push_str(&request.text);
     buffer.set_direction(request.direction.to_harfrust());
-    if let Some(script) =
-        harfrust::Script::from_iso15924_tag(harfrust::Tag::new(&request.script))
-    {
+    if let Some(script) = harfrust::Script::from_iso15924_tag(harfrust::Tag::new(&request.script)) {
         buffer.set_script(script);
     }
     if let Some(lang) = request.language.as_ref().and_then(|l| l.parse().ok()) {
