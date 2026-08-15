@@ -16,11 +16,13 @@
 // Skipped, loudly, when no Chromium is installed. A check that cannot run says
 // so rather than passing.
 
-import { spawn } from 'node:child_process';
-import { createServer } from 'node:http';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { extname, join, normalize } from 'node:path';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+// Finding Chrome, launching it, driving one tab, and serving a built site the
+// way Pages would. Shared with `web/scripts/prerender.mjs`, which has to serve
+// the site under exactly the rules this reads it back with -- otherwise the
+// prerendered files could work here and 404 in production, or the reverse.
+import { CHROME, createDistServer, launchChrome, session } from './browser-kit.mjs';
 
 // Point it at a deployed site instead of the local build:
 //
@@ -54,18 +56,6 @@ const PAGES = [
  *  fragments and the old `#/editor` test silently matched nothing. */
 const isEditor = (url) => /\/editor\/?$/.test(new URL(url).pathname);
 
-const CHROME = [
-  process.env.CHROME_PATH,
-  'C:/Program Files/Google/Chrome/Application/chrome.exe',
-  'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
-  'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-  'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
-  '/usr/bin/google-chrome',
-  '/usr/bin/chromium-browser',
-  '/usr/bin/chromium',
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-].find((p) => p && existsSync(p));
-
 if (!CHROME) {
   // A skip is a courtesy to someone without a browser installed, and a hole in
   // the gate anywhere else. CI is the one place this must not quietly pass:
@@ -81,131 +71,29 @@ if (!CHROME) {
 
 // --- a static server, because file:// is not the deployment ------------------
 //
-// The MIME type matters more than usual: a `.wasm` served as anything else
-// sends the glue down its non-streaming fallback, which is precisely the
-// difference between this passing and a real host failing.
-
-const TYPES = {
-  '.html': 'text/html',
-  '.mjs': 'text/javascript',
-  '.js': 'text/javascript',
-  '.css': 'text/css',
-  '.wasm': 'application/wasm',
-  '.pdf': 'application/pdf',
-};
-
 // The site is built with a base path, because Pages serves it from a
 // subdirectory. Serving it at `/` instead would 404 every asset — which is what
 // happened, and is exactly the deploy this check exists to prevent, so the
 // server mounts it where the build says it lives rather than papering over it.
-const BASE = (process.env.RASURA_BASE ?? '/').replace(/^\/*/, '/').replace(/\/*$/, '/');
-
-const server = ORIGIN
-  ? null
-  : createServer((req, res) => {
-      let url = decodeURIComponent(req.url.split('?')[0]);
-      if (BASE !== '/' && url.startsWith(BASE)) url = url.slice(BASE.length - 1);
-      const rel = normalize(url).replace(/^[/\\]+/, '');
-      let path = join(DIST, rel === '' ? 'index.html' : rel);
-      // A path with no file is a route, not a miss. Pages does this through
-      // 404.html; serving index.html here is the same handoff and keeps the
-      // check honest about deep links.
-      if (!existsSync(path) && !rel.includes('.')) path = join(DIST, 'index.html');
-      if (!path.startsWith(normalize(DIST)) || !existsSync(path)) {
-        res.writeHead(404).end('not found');
-        return;
-      }
-      res.writeHead(200, { 'content-type': TYPES[extname(path)] ?? 'application/octet-stream' });
-      res.end(readFileSync(path));
-    });
-if (server) await new Promise((r) => server.listen(0, '127.0.0.1', r));
-const base = ORIGIN ?? `http://127.0.0.1:${server.address().port}${BASE.slice(0, -1)}`;
+//
+// The server itself is in `browser-kit.mjs`, shared with the prerender step.
+// MIME types matter more than usual there: a `.wasm` served as anything else
+// sends the glue down its non-streaming fallback, which is precisely the
+// difference between this passing and a real host failing.
+const served = ORIGIN ? null : await createDistServer({ dist: DIST, base: process.env.RASURA_BASE ?? '/' });
+const base = ORIGIN ?? served.origin;
 console.log(`serving from ${base}/`);
 
 // --- the browser -------------------------------------------------------------
 
-const profile = mkdtempSync(join(tmpdir(), 'rasura-browser-'));
-const chrome = spawn(
-  CHROME,
-  [
-    '--headless=new',
-    '--disable-gpu',
-    '--no-sandbox',
-    '--disable-dev-shm-usage',
-    // A fresh profile, or the launch is handed to the browser the developer
-    // already has open and this process exits having done nothing.
-    `--user-data-dir=${profile}`,
-    '--remote-debugging-port=0',
-    'about:blank',
-  ],
-  { stdio: ['ignore', 'ignore', 'pipe'] },
-);
-
-// Chrome writes the port it chose into the profile directory once it is up.
-const portFile = join(profile, 'DevToolsActivePort');
-const started = Date.now();
-let port = null;
-while (!port && Date.now() - started < 30_000) {
-  // The file exists before it is finished. On Windows, opening it while Chrome
-  // still holds it fails with EBUSY, which crashed the run perhaps one time in
-  // three -- a check that fails at random teaches its reader to rerun it, and a
-  // rerun is how a real failure gets waved through. Existence is the invitation
-  // to try, not the guarantee it will work; the loop already handles waiting.
-  if (existsSync(portFile)) {
-    try {
-      const first = readFileSync(portFile, 'utf8').split('\n')[0].trim();
-      if (first) port = first;
-    } catch {
-      // Still being written. Fall through to the sleep and try again.
-    }
-  }
-  if (!port) await new Promise((r) => setTimeout(r, 100));
-}
-if (!port) {
-  chrome.kill();
-  server.close();
-  console.error('the browser never reported a debugging port');
+let chromePort;
+let killChrome;
+try {
+  ({ port: chromePort, kill: killChrome } = await launchChrome());
+} catch (e) {
+  served?.close();
+  console.error(e.message);
   process.exit(1);
-}
-
-let nextId = 1;
-/** One CDP session against one fresh tab. */
-async function session(url, run) {
-  const target = await (
-    await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`, { method: 'PUT' })
-  ).json();
-
-  const ws = new WebSocket(target.webSocketDebuggerUrl);
-  const pending = new Map();
-  const events = [];
-  ws.addEventListener('message', (m) => {
-    const msg = JSON.parse(m.data);
-    if (msg.id && pending.has(msg.id)) {
-      const { resolve, reject } = pending.get(msg.id);
-      pending.delete(msg.id);
-      msg.error ? reject(new Error(msg.error.message)) : resolve(msg.result);
-    } else if (msg.method) {
-      events.push(msg);
-    }
-  });
-  await new Promise((resolve, reject) => {
-    ws.addEventListener('open', resolve, { once: true });
-    ws.addEventListener('error', () => reject(new Error('devtools socket failed')), { once: true });
-  });
-
-  const send = (method, params = {}) =>
-    new Promise((resolve, reject) => {
-      const id = nextId++;
-      pending.set(id, { resolve, reject });
-      ws.send(JSON.stringify({ id, method, params }));
-    });
-
-  try {
-    return await run(send, events);
-  } finally {
-    ws.close();
-    await fetch(`http://127.0.0.1:${port}/json/close/${target.id}`);
-  }
 }
 
 let failures = 0;
@@ -218,7 +106,7 @@ const check = (label, ok, detail = '') => {
 };
 
 async function load(url) {
-  return session(url, async (send, events) => {
+  return session(chromePort, url, async (send, events) => {
     await send('Runtime.enable');
     await send('Log.enable');
     await send('Page.enable');
@@ -334,8 +222,59 @@ for (const [what, hash] of PAGES) {
   check(`${what}: nothing threw and nothing logged an error`, problems.length === 0, problems.join(' | '));
 }
 
-chrome.kill();
-server?.close();
+// --- what a client that never runs a script sees -----------------------------
+//
+// Every check above drives a browser, so every one of them passes whether or
+// not the routes were prerendered: React fills the page in either case. The
+// point of prerendering is the reader that does *not* do that -- a crawler on
+// its first pass, a model fetching a URL, a preview card generator -- and the
+// only way to test for it is to ask for the bytes and not execute them.
+//
+// Two routes rather than one, and one of them not the root, because the root is
+// the file the shell already lives in: if the prerender wrote nothing at all,
+// `/` would still look right and `/quickstart` would be the empty div.
+console.log('\nwithout javascript');
+
+for (const route of ['', 'quickstart']) {
+  const label = route || '/';
+  try {
+    const res = await fetch(`${base}/${route}`);
+    const html = await res.text();
+    const text = html
+      .replace(/<script[\s\S]*?<\/script>/g, '')
+      .replace(/<style[\s\S]*?<\/style>/g, '')
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    check(`${label}: served`, res.ok, `HTTP ${res.status}`);
+
+    // Prose, not markup. This catches the prerender having written nothing at
+    // all, and only that: once the root is prerendered, the fallback document
+    // is itself full of text, so a missing page still answers with plenty of
+    // it. Deleting `quickstart.html` and rerunning leaves this check green,
+    // which is why it is not the one relied on.
+    check(`${label}: the text is in the HTML`, text.length > 1200, `${text.length} chars`);
+
+    // This is the one that discriminates: the fallback carries the *root's*
+    // canonical, so a route serving the shell fails here even though it looks
+    // full. It is also how the first version of the prerender step failed --
+    // every page written with the root's canonical, which would have told
+    // search engines the whole site was duplicates of the homepage.
+    const canonical = html.match(/rel="canonical" href="([^"]*)"/)?.[1] ?? '';
+    const wanted = route === '' ? '/' : `/${route}`;
+    check(
+      `${label}: the canonical is its own`,
+      canonical.endsWith(wanted),
+      `canonical is ${JSON.stringify(canonical)}`,
+    );
+  } catch (e) {
+    check(`${label}: served`, false, e.message);
+  }
+}
+
+killChrome();
+served?.close();
 console.log(
   failures === 0
     ? '\nthe page starts, compiles the module and reads a document in a real browser.'

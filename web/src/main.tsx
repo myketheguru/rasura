@@ -68,12 +68,18 @@ const router = createBrowserRouter([
   },
 ], { basename: import.meta.env.BASE_URL })
 
-// Injected once. A crawler that runs scripts finds it; one that does not has
-// llms.txt and the meta tags in the HTML.
-const ld = document.createElement('script')
-ld.type = 'application/ld+json'
-ld.textContent = JSON.stringify(structuredData())
-document.head.append(ld)
+// Injected once, and only if the prerendered HTML did not already carry it.
+//
+// Every route now ships as static HTML snapshotted from a real browser, so the
+// block is in the document before this line runs. Appending unconditionally
+// gave every page two identical copies, which is the kind of thing a structured
+// data validator complains about and nobody notices.
+if (!document.querySelector('script[type="application/ld+json"]')) {
+  const ld = document.createElement('script')
+  ld.type = 'application/ld+json'
+  ld.textContent = JSON.stringify(structuredData())
+  document.head.append(ld)
+}
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

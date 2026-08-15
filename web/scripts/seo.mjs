@@ -62,9 +62,12 @@ ${urls
 /* --- llms.txt --------------------------------------------------------------
  *
  * The convention at llmstxt.org: a short, linkable summary a language model can
- * read without executing the site. That matters more here than it would for
- * most sites, because this one is a single-page application and a model that
- * does not run JavaScript sees an empty div.
+ * read without executing the site.
+ *
+ * It used to be the only thing a reader that does not run JavaScript could get,
+ * because every route was the same empty div. `prerender.mjs` fixed that, so
+ * this is now a summary rather than a substitute: one document that says what
+ * the project is, instead of nineteen that have to be read to find out.
  */
 
 writeFileSync(

@@ -1,7 +1,7 @@
 # Deploy the Rasura site to GitHub Pages.
 #
 # Two things live here: the documentation at `/`, and the demonstration editor
-# at `/#/editor`. Both are one React application built by Vite, and the module
+# at `/editor`. Both are one React application built by Vite, and the module
 # it drives is the same WebAssembly artefact the size budget and the node
 # harness are run against — built here rather than committed, so what deploys is
 # what CI measured.
@@ -18,6 +18,9 @@ on:
     paths:
       - 'web/**'
       - 'demo/browser.mjs'
+      # The prerender step and the browser check share it, so a change here
+      # changes what deploys.
+      - 'demo/browser-kit.mjs'
       - 'crates/rasura-wasm/**'
       - 'crates/rasura*/src/**'
       - '.github/workflows/pages.yml'
@@ -86,6 +89,24 @@ jobs:
         # relative to it. Passed in rather than written down, because the same
         # build has to work from a local preview at `/`.
         run: npx vite build
+        working-directory: web
+        env:
+          RASURA_BASE: /rasura/
+
+      # Snapshot every route to static HTML.
+      #
+      # The site is one React application behind a 2.4 KB index.html, so a
+      # crawler that does not run JavaScript saw an empty div on every route and
+      # one that does saw it on a second, deferred pass. This renders each route
+      # in the same headless Chrome the check below uses and writes what the
+      # browser produced, so the HTML carries the page's own text, title,
+      # description and canonical before a line of script runs.
+      #
+      # It fails the build rather than shipping a route that did not render:
+      # an empty shell that claims to be prerendered is worse than one that
+      # does not, because nothing downstream would look at it again.
+      - name: Prerender every route
+        run: node scripts/prerender.mjs
         working-directory: web
         env:
           RASURA_BASE: /rasura/

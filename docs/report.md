@@ -791,10 +791,65 @@ node harness/textdiff/validate-injected.mjs target/composed/greek.pdf \
 # The site, and the only check that proves it runs
 mkdir -p web/public/wasm
 cp target/pkg/web/rasura_wasm.* web/public/wasm/ && cp demo/sample.pdf web/public/
-npm --prefix web ci && npm --prefix web run build
+npm --prefix web ci
+RASURA_BASE=/rasura/ npm --prefix web run build
+RASURA_BASE=/rasura/ node web/scripts/prerender.mjs   # every route to static HTML
+node web/scripts/seo.mjs                              # robots, sitemap, llms.txt
 node demo/browser.mjs                 # headless Chrome, both routes
 RASURA_DEMO_ORIGIN=https://myketheguru.github.io/rasura node demo/browser.mjs
 ```
+
+`RASURA_BASE` has to be set on the **build**, not only on the checker. Setting it
+on one and not the other builds a site rooted at `/` and serves it at `/rasura/`,
+so the router's basename never matches and every route falls through to the
+catch-all. The symptom is the editor rendering the introduction page, which
+reads as a routing bug in the application and is not one.
+
+### Prerendering
+
+The site is one React application behind a 2.4 KB `index.html`. Every route
+shared that shell, so a reader that does not run JavaScript saw an empty div and
+Google saw one until its second, deferred rendering pass. `prerender.mjs` now
+loads each of the 18 routes in the same headless Chrome the check below uses and
+writes what the browser produced: 608 KB of HTML, 105 KB gzipped, each file
+carrying its own text, title, description and canonical.
+
+**Rendered in a browser rather than with `renderToString`.** A server-side entry
+point would be a second implementation of "render this application", able to
+disagree with the first silently and only in production — Radix generates ids,
+the theme reads `localStorage`, and hydration mismatches are exactly the class of
+fault this project keeps finding in checks that never ran the real thing. Chrome
+was already on the runner and already driven over the DevTools protocol.
+
+The client still calls `createRoot`, not `hydrateRoot`: the prerendered DOM is
+for the first paint and for readers that never run the script, and React replaces
+it rather than trying to adopt it. No mismatch is possible, and the cost is one
+frame.
+
+It shipped broken the first time, which is worth recording because the failure
+was invisible in every summary of it. Writing each file as it rendered meant the
+root's output *became the shell every later route was served from*: the readiness
+check — "a title, and three headings" — was satisfied instantly by the already
+rendered landing page, before React had booted, so sixteen of eighteen files came
+out byte-identical copies of the landing page carrying the root's canonical URL.
+Eighteen files were written, none of them empty, and the step reported success.
+Shipped, it would have told search engines the entire site was duplicates of the
+homepage: strictly worse than not prerendering at all.
+
+Two things fixed it and one of them would have been enough, which is the reason
+both are there. Output is held in memory and written only once every route has
+rendered, so the step cannot read its own output. And readiness is now the
+route's own canonical URL rather than any title — a condition no other page can
+satisfy. A duplicate-bytes check refuses to write at all if two routes come out
+identical.
+
+The browser check gained a section for it. Every other check there drives a
+browser, so all of them pass whether or not prerendering happened; the new one
+fetches two routes and does not execute them, which is the only way to test what
+a first-pass crawler sees. Deleting a prerendered file and rerunning fails it —
+on the canonical, not on the text, because once the root is prerendered the
+fallback is itself full of text. That is recorded in the check, next to the
+assertion that is not the one doing the work.
 
 ---
 
@@ -802,13 +857,14 @@ RASURA_DEMO_ORIGIN=https://myketheguru.github.io/rasura node demo/browser.mjs
 
 | | |
 |---|---|
-| WASM, raw after `wasm-opt -Oz` | 1,076.4 KB |
+| WASM, raw after `wasm-opt -Oz` | 1,081.6 KB |
 | **WASM, gzipped** | **449.7 KB** — 50.0% of the 900 KB budget |
-| WASM, brotli | 351.5 KB |
-| npm tarball | 459.1 KB |
-| npm unpacked | 1.3 MB |
-| Site JS, gzipped | 153.9 KB — React, Radix, the router and both pages |
-| Site CSS, gzipped | 6.8 KB |
+| WASM, brotli | 352.2 KB |
+| npm tarball | 480.9 KB |
+| npm unpacked | 1.17 MB |
+| Site JS, gzipped | 204.6 KB — React, Radix, the router and every page |
+| Site CSS, gzipped | 8.3 KB |
+| Prerendered HTML, 19 routes | 608 KB raw, 105 KB gzipped |
 
 The site's JavaScript is not counted against §12.3's budget and should not be:
 the budget is about what a *caller* ships when they install the package, and none
