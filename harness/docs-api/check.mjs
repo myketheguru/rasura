@@ -69,7 +69,16 @@ const PAGE_CALLABLE = [...PAGE].filter((m) => !m.startsWith('_'));
 
 /* --- where the documentation is ---------------------------------------------- */
 
-const TARGETS = ['README.md', 'web/src/pages/docs', 'web/src/pages/landing.tsx'];
+// `js/README.md` is a different file from the root one and is the one npm
+// serves: the tarball packs from `./js`, so the README on the package page is
+// this one. Fixing the root README and not this would have left the wrong
+// example in front of exactly the audience that installs the package.
+const TARGETS = [
+  'README.md',
+  'js/README.md',
+  'web/src/pages/docs',
+  'web/src/pages/landing.tsx',
+];
 
 // `web/src/pages/editor.tsx` is deliberately out of scope, and the reason is
 // the whole point of being careful here: the editor imports the *raw* module

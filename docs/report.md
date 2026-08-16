@@ -508,6 +508,40 @@ absorbs the renumbering and no content stream changes.
 
 The ones worth recording, because each was silent.
 
+**The documentation called an API that does not exist.** The headline example
+in `README.md` never ran. It called `doc.replaceText()` and `doc.commit()`,
+which are `Session` methods reached through `doc.edit()` and have never been on
+`Document`, and read `page.paragraphs[0]`, where `paragraphs` is a method: the
+property access yielded the function and `.length` yielded its arity, zero.
+Every mutation example in every guide had the same shape, plus three names that
+existed nowhere at all, `doc.configureSession`, `doc.redactText` and
+`doc.sessionStatus`.
+
+Nothing caught it because nothing compared the two. `js/test/api.test.mjs` uses
+the API correctly and passed throughout; the prose used a different API and no
+check knew the prose existed. Tests prove the library works. They cannot prove
+the documentation describes it.
+
+`harness/docs-api/check.mjs` now reads the surface out of `js/src/index.js` and
+checks every documented call against it, asking "is this real" rather than "is
+this one of the mistakes already found" — which is the difference between
+catching a misplaced method and catching an invented one. Two false positives
+had to be designed out, and both mattered: the editor imports the *raw* module,
+where a page is a plain object and `page.paragraphs` really is an array, so it
+is out of scope and "fixing" those lines would have broken a working page; and
+`doc.page_count()` inside a Rust block is correct Rust, so the scan skips
+non-JavaScript code blocks. A checker that flags lines nobody should change is
+one people learn to run with their eyes closed.
+
+**A correction to an earlier account of this.** It was written up, including in
+a commit message, as having "shipped in the npm tarball twice". That was wrong.
+The npm package packs from `./js` and serves `js/README.md`, which is a
+different file and was correct all along: it used `doc.edit()` and
+`session.replaceText(id, { start, end }, text)` properly. The broken example was
+on the GitHub repository page and the documentation site, and never in a
+published package. The check now covers `js/README.md` as well, because the
+reason it was right was luck rather than a check.
+
 **Every embedded font had an out-of-order table directory.** OpenType requires
 the sfnt table directory "sorted in ascending order by tag" and readers take it
 at its word: `read-fonts`, HarfBuzz and FreeType's fast path binary-search it.
