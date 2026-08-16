@@ -10,6 +10,14 @@ homepage.workspace = true
 documentation.workspace = true
 keywords.workspace = true
 categories.workspace = true
+# Not published, and now the manifest says so rather than RELEASING.md alone.
+#
+# This is a build artefact for the npm package, not a library anyone should
+# depend on: publishing it would invite exactly that, and its `cdylib` is
+# useless to a Rust caller. It has always been excluded by the release
+# instructions naming six crates and not this one, which is a rule enforced by
+# whoever is typing. The other six harness crates already carry this line.
+publish = false
 
 [lib]
 # `cdylib` for the wasm artefact, `rlib` so the crate's own tests can run on the

@@ -18,7 +18,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.85"
@@ -36,12 +36,12 @@ categories = ["text-processing", "wasm", "encoding", "multimedia"]
 # version has to be there too. Declaring them here rather than in five
 # manifests means the version cannot drift between them at the moment it
 # matters, which is the moment of publishing.
-rasura-cos = { path = "crates/rasura-cos", version = "0.1.1" }
-rasura-content = { path = "crates/rasura-content", version = "0.1.1" }
-rasura-layout = { path = "crates/rasura-layout", version = "0.1.1" }
-rasura-font = { path = "crates/rasura-font", version = "0.1.1" }
-rasura-edit = { path = "crates/rasura-edit", version = "0.1.1" }
-rasura-flow = { path = "crates/rasura-flow", version = "0.1.1" }
+rasura-cos = { path = "crates/rasura-cos", version = "0.1.2" }
+rasura-content = { path = "crates/rasura-content", version = "0.1.2" }
+rasura-layout = { path = "crates/rasura-layout", version = "0.1.2" }
+rasura-font = { path = "crates/rasura-font", version = "0.1.2" }
+rasura-edit = { path = "crates/rasura-edit", version = "0.1.2" }
+rasura-flow = { path = "crates/rasura-flow", version = "0.1.2" }
 
 thiserror = "2"
 indexmap = "2"
