@@ -61,7 +61,31 @@ export function Shell() {
 
         <div className="flex-1" />
 
-        <Button variant="ghost" size="sm" asChild>
+        {/* The same two destinations, at a size that fits a narrow bar.
+            They were hidden below `sm` and nothing replaced them, so on a
+            phone the header offered GitHub and a theme toggle and no way to
+            reach either half of the site. */}
+        <nav className="flex items-center gap-1 sm:hidden">
+          {[
+            { to: '/introduction', label: 'Docs' },
+            { to: '/editor', label: 'Editor' },
+          ].map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              className={({ isActive }) =>
+                cn(
+                  'rounded-md px-2 py-1.5 text-[13px] font-medium no-underline transition-colors',
+                  isActive ? 'bg-accent text-foreground' : 'text-muted-foreground',
+                )
+              }
+            >
+              {item.label}
+            </NavLink>
+          ))}
+        </nav>
+
+        <Button variant="ghost" size="sm" className="hidden sm:inline-flex" asChild>
           <a href={REPO} target="_blank" rel="noreferrer">
             GitHub
             <ExternalLink />

@@ -313,8 +313,14 @@ function Paths() {
     <Reveal>
       <section className="border-b border-border py-20">
         <div className="mx-auto w-full max-w-[80rem] px-4 sm:px-6">
+          {/* `min-w-0` on both children, or the page scrolls sideways on a
+              phone. A grid item is `min-width: auto`, so the one holding the
+              code blocks refuses to shrink below its widest line and stretches
+              the whole grid past the viewport -- 511px inside 390px. The
+              `overflow-x-auto` on the code block cannot help, because it is the
+              container around it that is being widened. */}
           <div className="grid gap-10 lg:grid-cols-[0.85fr_1.15fr] lg:items-start">
-            <div className="lg:sticky lg:top-24">
+            <div className="min-w-0 lg:sticky lg:top-24">
               <Eyebrow>Two things it does</Eyebrow>
               <h2 className="mt-4 text-balance text-3xl font-semibold tracking-[-0.03em] sm:text-4xl">
                 Change a document, or make one.
@@ -335,7 +341,7 @@ function Paths() {
               </Button>
             </div>
 
-            <Tabs defaultValue="edit">
+            <Tabs defaultValue="edit" className="min-w-0">
               <TabsList>
                 <TabsTrigger value="edit">Edit</TabsTrigger>
                 <TabsTrigger value="create">Create</TabsTrigger>

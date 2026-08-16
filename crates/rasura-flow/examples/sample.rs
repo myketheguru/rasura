@@ -47,6 +47,22 @@ fn page(blocks: &[(&str, f64, &str, f64)]) -> Vec<u8> {
     let mut y = 720.0;
 
     for (text, size, font, gap) in blocks {
+        // A PDF literal string is *bytes*, and these fonts are single-byte
+        // encoded, so one non-ASCII character here becomes several character
+        // codes in the file. An em dash in this text shipped as `â€"` in the
+        // demo for exactly that reason: `into_bytes()` wrote its three UTF-8
+        // bytes and every reader, this library included, correctly read three
+        // characters back. The fixture was wrong and the reader was right,
+        // which is the harder way round to notice.
+        //
+        // Writing WinAnsi here would be the general fix. This is a fixture, so
+        // it refuses instead: the text is meant to be plain, and a silent
+        // mangling in the page everyone opens first is worse than a panic in a
+        // generator that runs in CI.
+        assert!(
+            text.is_ascii(),
+            "the sample writes single-byte literals, so its text must be ASCII: {text:?}",
+        );
         y -= gap;
         for line in wrap(text, *size) {
             let escaped = line.replace('\\', r"\\").replace('(', r"\(").replace(')', r"\)");
@@ -79,7 +95,7 @@ fn main() {
         (
             "This paragraph exists so that line breaking is visible. Its last line is \
              short, which is exactly why a single page cannot tell you where the measure \
-             is — twenty pages of the same column can.",
+             is, and twenty pages of the same column can.",
             10.0,
             "F1",
             10.0,

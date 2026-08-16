@@ -66,6 +66,10 @@ export default function Editor() {
   const [wasm, setWasm] = React.useState<R.Wasm | null>(null)
   const [fatal, setFatal] = React.useState<string | null>(null)
   const scrollRef = React.useRef<HTMLDivElement>(null)
+  /** Width available to the sheet, so it can be fitted rather than clipped. */
+  const [avail, setAvail] = React.useState(0)
+  /** The inspector, which is a bottom sheet on a phone and a rail above it. */
+  const [details, setDetails] = React.useState(false)
   const pageRefs = React.useRef<(HTMLDivElement | null)[]>([])
   const canvasRefs = React.useRef<(HTMLCanvasElement | null)[]>([])
   const [handle, setHandle] = React.useState<number | null>(null)
@@ -165,7 +169,7 @@ export default function Editor() {
 
   // --- drawing -------------------------------------------------------------
 
-  const drawPage = React.useCallback((canvas: HTMLCanvasElement | null, page: PageModel | null, highlight: Paragraph | null) => {
+  const drawPage = React.useCallback((canvas: HTMLCanvasElement | null, page: PageModel | null, highlight: Paragraph | null, avail: number) => {
     if (!canvas || !page) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
@@ -173,7 +177,15 @@ export default function Editor() {
 
     const { width, height } = pageBox(page)
     const dpr = window.devicePixelRatio || 1
-    const scale = Math.min(1, 720 / height)
+    // Fit the height, and the *width* of whatever space there is.
+    //
+    // This fitted the height alone, which is fine on a desktop and clips the
+    // page on a phone: an A4 sheet at 720px tall is about 509px wide, so on a
+    // 390px screen a centred page lost roughly 60px off each edge and the
+    // first characters of every line were simply not on screen. Nothing
+    // reported it, because the canvas was drawn correctly — it was the sheet
+    // that did not fit.
+    const scale = Math.min(1, 720 / height, avail > 0 ? avail / width : Infinity)
     canvas.width = Math.round(width * scale * dpr)
     canvas.height = Math.round(height * scale * dpr)
     canvas.style.width = `${Math.round(width * scale)}px`
@@ -258,9 +270,27 @@ export default function Editor() {
     // Keying it to pageIndex meant scrolling moved the selection box onto the
     // next page, over a paragraph nobody had chosen.
     pages.forEach((p, i) =>
-      drawPage(canvasRefs.current[i], p, selected?.page === i ? selected.paragraph : null),
+      drawPage(canvasRefs.current[i], p, selected?.page === i ? selected.paragraph : null, avail),
     )
-  }, [pages, selected, drawPage])
+  }, [pages, selected, drawPage, avail])
+
+  // How much width the sheet may use, watched rather than measured once.
+  //
+  // Nothing here reacted to size at all, so a page drawn at one width kept it
+  // through a rotation or a window resize. The padding is subtracted here
+  // because the canvas is sized in the same units the container pads in.
+  React.useEffect(() => {
+    const root = scrollRef.current
+    if (!root) return
+    const measure = () => {
+      const pad = window.innerWidth < 640 ? 16 : 48 // p-2 on small, p-6 above
+      setAvail(Math.max(0, root.clientWidth - pad))
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(root)
+    return () => observer.disconnect()
+  }, [])
 
   // Which page is being read, from what is actually in view. The one covering
   // the middle of the viewport wins; using the topmost visible page makes the
@@ -398,30 +428,37 @@ export default function Editor() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* --- tool bar --- */}
-      <div className="flex h-12 shrink-0 items-center gap-1.5 overflow-x-auto border-b border-border bg-card px-3">
-        <div className="flex items-center gap-1.5 rounded-md border border-border px-2 py-1">
-          <FileText className="size-3.5 text-muted-foreground" />
-          <span className="max-w-40 truncate text-[12.5px]">{fileName}</span>
+      {/* --- tool bar ---
+          On a phone this keeps the file name and the actions that commit, and
+          everything else moves to the sheet behind "Tools". A row of twelve
+          controls in a horizontal scroller is a desktop toolbar that has been
+          made narrower, not something anyone would design for a thumb. */}
+      <div className="flex h-12 shrink-0 items-center gap-1.5 border-b border-border bg-card px-2 sm:px-3 lg:overflow-x-auto">
+        <div className="flex min-w-0 items-center gap-1.5 rounded-md border border-border px-2 py-1">
+          <FileText className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="max-w-24 truncate text-[12.5px] sm:max-w-40">{fileName}</span>
         </div>
 
-        <Separator orientation="vertical" />
+        <Separator orientation="vertical" className="hidden lg:block" />
 
-        <Button variant="ghost" size="icon-sm" onClick={() => goto(pageIndex - 1)} aria-label="Previous page">
-          <ChevronLeft />
-        </Button>
-        <span
-          data-testid="page-label"
-          className="min-w-14 text-center text-[12.5px] tabular-nums text-muted-foreground"
-        >
-          {info ? `${pageIndex + 1} / ${info.pageCount}` : '–'}
-        </span>
-        <Button variant="ghost" size="icon-sm" onClick={() => goto(pageIndex + 1)} aria-label="Next page">
-          <ChevronRight />
-        </Button>
+        <div className="hidden items-center gap-1.5 lg:flex">
+          <Button variant="ghost" size="icon-sm" onClick={() => goto(pageIndex - 1)} aria-label="Previous page">
+            <ChevronLeft />
+          </Button>
+          <span
+            data-testid="page-label"
+            className="min-w-14 text-center text-[12.5px] tabular-nums text-muted-foreground"
+          >
+            {info ? `${pageIndex + 1} / ${info.pageCount}` : '–'}
+          </span>
+          <Button variant="ghost" size="icon-sm" onClick={() => goto(pageIndex + 1)} aria-label="Next page">
+            <ChevronRight />
+          </Button>
+        </div>
 
-        <Separator orientation="vertical" />
+        <Separator orientation="vertical" className="hidden lg:block" />
 
+        <div className="hidden items-center gap-1.5 lg:flex">
         <span className="text-xs font-medium text-muted-foreground">Require</span>
         <Select
           value={floor}
@@ -498,12 +535,13 @@ export default function Editor() {
         <Button variant="ghost" size="sm" className="text-destructive" onClick={() => setRedacting('')}>
           Redact…
         </Button>
+        </div>
 
         <div className="flex-1" />
 
         <label>
           <Button variant="outline" size="sm" asChild>
-            <span>Open…</span>
+            <span className="whitespace-nowrap">Open…</span>
           </Button>
           <input
             type="file"
@@ -512,7 +550,7 @@ export default function Editor() {
             onChange={(e) => e.target.files?.[0] && openFile(e.target.files[0])}
           />
         </label>
-        <Button variant="outline" size="sm" onClick={save}>
+        <Button variant="outline" size="sm" className="hidden sm:inline-flex" onClick={save}>
           Save
         </Button>
         <Button size="sm" disabled={session.staged === 0} onClick={commit}>
@@ -541,7 +579,7 @@ export default function Editor() {
         <div className="flex min-h-0 min-w-0 flex-col">
           <div
             ref={scrollRef}
-            className="flex flex-1 flex-col items-center gap-5 overflow-auto bg-muted/50 p-6"
+            className="flex flex-1 flex-col items-center gap-5 overflow-auto bg-muted/50 p-2 sm:p-6"
           >
             {pages.map((_model, i) => (
               <div
@@ -582,8 +620,13 @@ export default function Editor() {
               </div>
             ))}
           </div>
-          <p className="shrink-0 border-t border-border bg-card px-3 py-1.5 text-center text-[11.5px] text-muted-foreground">
+          {/* The same instruction in the language of the device it is on.
+              "Double-click" is not an action anyone performs on a phone. */}
+          <p className="hidden shrink-0 border-t border-border bg-card px-3 py-1.5 text-center text-[11.5px] text-muted-foreground lg:block">
             Scroll to move between pages · click to select a paragraph · double-click to edit
+          </p>
+          <p className="shrink-0 border-t border-border bg-card px-3 py-1.5 text-center text-[11.5px] text-muted-foreground lg:hidden">
+            Scroll for pages · tap a paragraph · double-tap to edit
           </p>
         </div>
 
@@ -598,6 +641,79 @@ export default function Editor() {
         />
       </div>
 
+      {/* --- the bar a thumb reaches ---
+          Below the rail's breakpoint the inspector is simply absent, which
+          left the page count, the fidelity floor, every operation and the
+          whole document panel unreachable on a phone. This is where they go:
+          page position, the actions, and a sheet for the rest. */}
+      <div className="flex h-14 shrink-0 items-center gap-1 border-t border-border bg-card px-2 lg:hidden">
+        <Button variant="ghost" size="icon" onClick={() => goto(pageIndex - 1)} aria-label="Previous page">
+          <ChevronLeft />
+        </Button>
+        <span
+          data-testid="page-label"
+          className="min-w-12 text-center text-[13px] tabular-nums text-muted-foreground"
+        >
+          {info ? `${pageIndex + 1} / ${info.pageCount}` : '–'}
+        </span>
+        <Button variant="ghost" size="icon" onClick={() => goto(pageIndex + 1)} aria-label="Next page">
+          <ChevronRight />
+        </Button>
+
+        <div className="flex-1" />
+
+        <Button
+          variant="ghost"
+          size="icon"
+          disabled={!session.canUndo}
+          onClick={() => run('Undo', (m, h) => m.undo(h))}
+          aria-label="Undo"
+        >
+          <Undo2 />
+        </Button>
+        <Button variant="outline" size="sm" onClick={save}>
+          Save
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => setDetails(true)}>
+          Details
+          {session.staged > 0 && (
+            <span className="ml-1 rounded-full bg-primary px-1.5 text-[11px] tabular-nums text-primary-foreground">
+              {session.staged}
+            </span>
+          )}
+        </Button>
+      </div>
+
+      <Dialog open={details} onOpenChange={setDetails}>
+        <DialogContent className="lg:hidden">
+          <DialogHeader>
+            <DialogTitle>This document</DialogTitle>
+          </DialogHeader>
+          <div className="max-h-[65dvh] overflow-y-auto">
+            <MobileTools
+              info={info}
+              page={page}
+              selected={selected?.paragraph ?? null}
+              log={log}
+              saved={saved}
+              floor={floor}
+              onFloor={(v) => {
+                setFloor(v)
+                run('Configure', (m, h) => m.configureSession(h, { requireFidelity: v }))
+              }}
+              onRedact={() => {
+                setDetails(false)
+                setRedacting('')
+              }}
+              onCompact={() => {
+                const n = run('Compact fonts', (m, h) => m.compactFonts(h))
+                if (n !== undefined) note('Compact fonts', 'exact', `${n} font(s) touched`)
+              }}
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* --- status --- */}
       <footer className="flex h-10 shrink-0 items-center gap-2 border-t border-border bg-card px-3 text-[12.5px]">
         <span
@@ -608,7 +724,7 @@ export default function Editor() {
             status.state === 'idle' && 'bg-muted-foreground/50',
           )}
         />
-        <span data-testid="status">{status.text}</span>
+        <span data-testid="status" className="truncate">{status.text}</span>
         <div className="flex-1" />
         {/* The version comes from the module itself, so its presence is proof
             the library answered rather than merely that the page rendered. */}
@@ -618,13 +734,20 @@ export default function Editor() {
           </span>
         )}
         {info && (
-          <span className="tabular-nums text-muted-foreground">{fmtBytes(info.memoryUsage)}</span>
+          <span className="hidden tabular-nums text-muted-foreground sm:inline">
+            {fmtBytes(info.memoryUsage)}
+          </span>
         )}
-        <Separator orientation="vertical" />
-        <Badge>{session.staged} staged</Badge>
+        {/* Undo, redo and the staged count are on the bottom bar below the
+            rail's breakpoint, where a thumb can reach them. Repeating them
+            here put two undo buttons on a phone, one of them in a 10px-tall
+            strip at the very bottom of the screen. */}
+        <Separator orientation="vertical" className="hidden lg:block" />
+        <Badge className="hidden lg:inline-flex">{session.staged} staged</Badge>
         <Button
           variant="ghost"
           size="sm"
+          className="hidden lg:inline-flex"
           disabled={!session.canUndo}
           onClick={() => {
             run('Undo', (m, h) => m.undo(h))
@@ -636,6 +759,7 @@ export default function Editor() {
         <Button
           variant="ghost"
           size="sm"
+          className="hidden lg:inline-flex"
           disabled={!session.canRedo}
           onClick={() => {
             run('Redo', (m, h) => m.redo(h))
@@ -765,6 +889,44 @@ function Inspector({
 
   return (
     <aside className="hidden min-h-0 flex-col border-l border-border bg-card lg:flex">
+      <InspectorBody
+        info={info}
+        page={page}
+        selected={selected}
+        log={log}
+        saved={saved}
+        fonts={fonts}
+        fields={fields}
+      />
+    </aside>
+  )
+}
+
+/**
+ * The panel's contents, without the panel.
+ *
+ * Split out so the phone's sheet and the desktop's rail show the same thing.
+ * Rendering it twice from two copies is how they drift, and the version behind
+ * the smaller breakpoint is the one nobody would notice going stale.
+ */
+function InspectorBody({
+  info,
+  page,
+  selected,
+  log,
+  saved,
+  fonts,
+  fields,
+}: {
+  info: R.DocumentInfo | null
+  page: PageModel | null
+  selected: Paragraph | null
+  log: LogEntry[]
+  saved: R.Saved | null
+  fonts: ReturnType<R.Wasm['fontRequirements']>
+  fields: ReturnType<R.Wasm['formFields']>
+}) {
+  return (
       <Tabs defaultValue="document" className="flex min-h-0 flex-1 flex-col">
         <div className="border-b border-border p-2.5">
           <TabsList>
@@ -911,7 +1073,75 @@ function Inspector({
           </TabsContent>
         </div>
       </Tabs>
-    </aside>
+  )
+}
+
+/**
+ * The sheet behind "Details", which is where a phone reaches everything the
+ * rail holds on a wider screen: the fidelity floor, the operations that are not
+ * one-tap, and the whole inspector.
+ */
+function MobileTools({
+  info,
+  page,
+  selected,
+  log,
+  saved,
+  floor,
+  onFloor,
+  onRedact,
+  onCompact,
+}: {
+  info: R.DocumentInfo | null
+  page: PageModel | null
+  selected: Paragraph | null
+  log: LogEntry[]
+  saved: R.Saved | null
+  floor: string
+  onFloor: (v: string) => void
+  onRedact: () => void
+  onCompact: () => void
+}) {
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1.5">
+        <Label>Require fidelity</Label>
+        <Select value={floor} onValueChange={onFloor}>
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="overlaid">any fidelity</SelectItem>
+            <SelectItem value="substituted">substituted</SelectItem>
+            <SelectItem value="reembedded">re-embedded</SelectItem>
+            <SelectItem value="exact">exact</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" className="flex-1" onClick={onCompact}>
+          <Shrink /> Compact fonts
+        </Button>
+        <Button variant="destructive" size="sm" className="flex-1" onClick={onRedact}>
+          Redact…
+        </Button>
+      </div>
+
+      <Separator />
+
+      <div className="min-h-[18rem]">
+        <InspectorBody
+          info={info}
+          page={page}
+          selected={selected}
+          log={log}
+          saved={saved}
+          fonts={[]}
+          fields={[]}
+        />
+      </div>
+    </div>
   )
 }
 
