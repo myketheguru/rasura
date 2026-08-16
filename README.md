@@ -40,16 +40,16 @@ import { Pdf } from 'rasura'
 const doc = await Pdf.open(await file.arrayBuffer())
 const page = await doc.page(0)
 
-console.log(page.paragraphs[0].text)
+const [first] = page.paragraphs()
+console.log(first.text)
 // "Prepared for the board, and for anyone curious about what a PDF editor can see."
 
-const outcome = await doc.replaceText(
-  { page: 0, paragraph: page.paragraphs[0].id, from: 0, to: 8 },
-  'Written',
-)
+// Edits are staged in a session, so a set of them commits or rolls back together.
+const session = doc.edit()
+const outcome = await session.replaceText(first.id, { start: 0, end: 8 }, 'Written')
 console.log(outcome.fidelity)  // 'exact'
 
-const { bytes, bytesAppended } = await doc.commit()
+const { bytes, bytesAppended } = await session.commit()
 // The original file, plus 1,204 bytes. Everything else is byte-identical.
 ```
 
@@ -119,10 +119,11 @@ reached rather than throwing on degradation:
 | `substituted` | A different face was used. The text is right, the letterforms are not. |
 | `overlaid` | Old content covered, new content drawn on top. A last resort. |
 
-Set a floor and anything below it is refused instead of quietly degraded:
+Set a floor when the session opens and anything below it is refused instead of
+quietly degraded:
 
 ```js
-await doc.configureSession({ requireFidelity: 'exact' })
+const session = doc.edit({ requireFidelity: 'exact' })
 ```
 
 **3. The file stays a valid PDF.** Output passes `qpdf --check` and opens in

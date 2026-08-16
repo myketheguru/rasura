@@ -140,8 +140,10 @@ const EDIT: Method[] = [
     returns: 'Promise<Outcome>',
     returnsDesc: 'fidelity, and compromises listing anything that had to give.',
     throws: ['fidelity-below-required', 'type3-glyph-missing', 'font-unavailable'],
-    example: `const out = await doc.replaceText(
-  { page: 0, paragraph: 0, from: 0, to: 5 },
+    example: `const session = doc.edit()
+const out = await session.replaceText(
+  paragraph.id,
+  { start: 0, end: 5 },
   'Hello',
 )`,
     notes: 'Send the smallest range that differs. Replacing a whole paragraph works and re-breaks every line; trimming the common prefix and suffix usually keeps the edit exact.',
@@ -236,7 +238,7 @@ const SESSION: Method[] = [
     summary: 'Apply every staged operation and write the file.',
     returns: 'Promise<Saved>',
     returnsDesc: 'bytes, mode, bytesAppended and warnings.',
-    example: `const { bytes, mode, bytesAppended } = await doc.commit()`,
+    example: `const { bytes, mode, bytesAppended } = await session.commit()`,
   },
   {
     name: 'save',

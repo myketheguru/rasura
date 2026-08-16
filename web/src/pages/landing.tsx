@@ -348,16 +348,20 @@ function Paths() {
 const doc = await Pdf.open(await file.arrayBuffer())
 const page = await doc.page(0)
 
-page.paragraphs[0].text
+const [first] = page.paragraphs()
+first.text
 // 'Prepared for the board, and for anyone curious'
 
-const outcome = await doc.replaceText(
-  { page: 0, paragraph: page.paragraphs[0].id, from: 0, to: 8 },
+// Edits are staged, so a set of them commits or rolls back together.
+const session = doc.edit()
+const outcome = await session.replaceText(
+  first.id,
+  { start: 0, end: 8 },
   'Written',
 )
 outcome.fidelity  // 'exact'
 
-const { bytes, bytesAppended } = await doc.commit()
+const { bytes, bytesAppended } = await session.commit()
 // the original file, plus 1,204 bytes`}</Code>
               </TabsContent>
 

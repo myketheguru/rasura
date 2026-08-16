@@ -207,17 +207,17 @@ const doc = await Pdf.open(await file.arrayBuffer())
 const page = await doc.page(0)
 
 // Paragraphs come back reconstructed, in reading order.
-const first = page.paragraphs[0]
+const [first] = page.paragraphs()
 console.log(first.text)
 
+// Edits are staged in a session, never on the document directly.
+const session = doc.edit()
+
 // Replace characters 0 to 5 of that paragraph.
-const outcome = await doc.replaceText(
-  { page: 0, paragraph: first.id, from: 0, to: 5 },
-  'Hello',
-)
+const outcome = await session.replaceText(first.id, { start: 0, end: 5 }, 'Hello')
 console.log(outcome.fidelity) // 'exact'
 
-const { bytes } = await doc.commit()
+const { bytes } = await session.commit()
 await doc.close()`}</Code>
       <p>
         The saved bytes are the original file with one revision appended. Everything you
@@ -232,9 +232,9 @@ console.log(info.pageCount, info.documentKind, info.taggedStatus)
 for (const l of info.leniencies) console.log(l.kind, l.detail)
 
 const page = await doc.page(0)
-console.log(page.paragraphs.length, 'paragraphs')
-console.log(page.tables.length, 'tables')
-console.log(page.images.length, 'images')`}</Code>
+console.log(page.paragraphs().length, 'paragraphs')
+console.log(page.tables().length, 'tables')
+console.log(page.images().length, 'images')`}</Code>
       <p>
         <C>leniencies</C> is worth reading even when nothing is wrong. It lists every
         specification deviation the parser accepted: a broken cross-reference table, a

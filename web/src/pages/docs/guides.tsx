@@ -44,7 +44,7 @@ page.tables       // detected tables, with row and column counts
 page.images       // image extents, and whether each is editable
 page.mediaBox     // the page box, in points`}</Code>
       <p>Each paragraph carries more than its text:</p>
-      <Code lang="js">{`const p = page.paragraphs[0]
+      <Code lang="js">{`const [p] = page.paragraphs()
 
 p.text            // the characters
 p.box             // where it sits
@@ -110,10 +110,8 @@ export function Editing() {
         An edit names a paragraph and a character range within it. Offsets are into the
         reconstructed text, so they line up with what you showed the user.
       </p>
-      <Code lang="js">{`await doc.replaceText(
-  { page: 0, paragraph: p.id, from: 12, to: 19 },
-  'replacement',
-)`}</Code>
+      <Code lang="js">{`const session = doc.edit()
+await session.replaceText(p.id, { start: 12, end: 19 }, 'replacement')`}</Code>
       <Note kind="success" title="Send the smallest range that differs">
         Replacing a whole paragraph works, and re-breaks every line in it. Trimming the
         common prefix and suffix first usually keeps the edit inside one text-showing
@@ -144,12 +142,14 @@ export function Editing() {
         across every kind of operation: an image move and a text edit staged together come
         off in reverse order and leave the file byte-identical.
       </p>
-      <Code lang="js">{`await doc.replaceText(range, 'first')
-await doc.deletePage(4)
+      <Code lang="js">{`const session = doc.edit()
 
-const { staged, canUndo } = await doc.sessionStatus() // 2, true
-await doc.undo()                                       // the page comes back
-const { bytes } = await doc.commit()                   // only the text edit lands`}</Code>
+await session.replaceText(p.id, { start: 0, end: 5 }, 'first')
+await session.deletePage(4)
+
+const { staged, canUndo } = await session.status()  // 2, true
+await session.undo()                                // the page comes back
+const { bytes } = await session.commit()            // only the text edit lands`}</Code>
     </>
   )
 }
@@ -183,15 +183,16 @@ export function Fidelity() {
       </div>
 
       <H2 id="floor">Setting a floor</H2>
-      <Code lang="js">{`await doc.configureSession({ requireFidelity: 'exact' })
+      <Code lang="js">{`// The floor is set when the session opens, and holds for every edit in it.
+const session = doc.edit({ requireFidelity: 'exact' })
 
 try {
-  await doc.replaceText(range, 'Ω')
+  await session.replaceText(p.id, range, 'Ω')
 } catch (e) {
   if (e.code === 'fidelity-below-required') {
     // The font has no omega. Supply one, or accept a lower rung.
     await doc.registerFont(font, { matchFor: 'Helvetica' })
-    await doc.replaceText(range, 'Ω') // now reembedded
+    await session.replaceText(p.id, range, 'Ω') // now reembedded
   }
 }`}</Code>
 
@@ -355,8 +356,9 @@ export function Redaction() {
       />
 
       <H2 id="removing">Removing</H2>
-      <Code lang="js">{`await doc.redactText('Account 4417-9920')
-const { bytes } = await doc.commit()`}</Code>
+      <Code lang="js">{`await doc.redact('Account 4417-9920')
+// Redaction forces a full rewrite, so it saves through the document.
+const { bytes } = await doc.save()`}</Code>
       <p>
         The glyphs are removed from the content stream and the surrounding text is left
         where it was, rather than closed up. That matters: text that slid left would move
@@ -517,7 +519,7 @@ export function Errors() {
       <Code lang="js">{`import { PdfError, CODES } from 'rasura'
 
 try {
-  await doc.replaceText(range, text)
+  await session.replaceText(p.id, range, text)
 } catch (e) {
   if (e instanceof PdfError) {
     e.code     // one of CODES

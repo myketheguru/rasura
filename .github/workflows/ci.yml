@@ -38,6 +38,17 @@ jobs:
       - name: Tests
         run: cargo test --workspace
 
+      # The documentation's JavaScript against the JavaScript that exists.
+      #
+      # The headline example in README.md never ran: it called `replaceText`
+      # and `commit` on the document, where both are Session methods, and read
+      # `page.paragraphs[0]` where `paragraphs` is a method. Every guide had
+      # the same shape and it shipped in the npm tarball twice. The tests use
+      # the API correctly and passed the whole time -- they prove the library
+      # works, and cannot prove the prose describes it.
+      - name: The documentation matches the API
+        run: node harness/docs-api/check.mjs
+
   licences:
     # Spec 4.3: every runtime dependency must be MIT, Apache-2.0, BSD, ISC or
     # Zlib. This is a hard build gate, not a guideline.
