@@ -22,8 +22,18 @@ export interface Box {
   y1: number
 }
 
+// The ids the module actually returns are plain numbers, and the operations
+// that take them are declared `paragraph: number` and `image: number`.
+//
+// These were written as objects -- `{ region, index }` and
+// `{ number, generation }` -- and being hand-written, TypeScript believed them.
+// `applyEdit` then called `replaceText(h, page, p.id.region, p.id.index, ...)`
+// with two `undefined`s and one argument too many, so the replacement string
+// arrived as a number and the module faulted. Editing in the demo had never
+// worked, and nothing noticed because nothing in the browser check ever tried
+// to edit anything.
 export interface Paragraph {
-  id: { region: number; index: number }
+  id: number
   text: string
   box: Box
   lineCount: number
@@ -33,7 +43,7 @@ export interface Paragraph {
 }
 
 export interface ImageBlock {
-  id: { number: number; generation: number } | null
+  id: number
   box: Box
   editable: boolean
   pixels: { width: number; height: number } | null

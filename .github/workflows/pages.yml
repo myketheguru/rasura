@@ -74,6 +74,17 @@ jobs:
           cp target/pkg/web/rasura_wasm_bg.wasm web/public/wasm/
           cp demo/sample.pdf web/public/
 
+      # The editor hand-writes its view of the module, for the good reason that
+      # wasm-bindgen's `.d.ts` describes the ABI rather than the API. Nothing
+      # checked the hand-written half against the generated one, and it was
+      # wrong: `replaceText` was declared with a paragraph id split into
+      # `region` and `index`, so every edit passed two undefineds and one
+      # argument too many, and the module faulted. Editing in the demo had
+      # never worked. This runs after the module is built, because it compares
+      # against the module.
+      - name: The editor's calls match the module
+        run: node harness/wasm-api/check.mjs
+
       - name: Install
         run: npm ci
         working-directory: web

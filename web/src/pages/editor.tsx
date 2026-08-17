@@ -70,6 +70,8 @@ export default function Editor() {
   const [avail, setAvail] = React.useState(0)
   /** The inspector, which is a bottom sheet on a phone and a rail above it. */
   const [details, setDetails] = React.useState(false)
+  /** Whether to draw the reconstruction's structure over the page. */
+  const [structure, setStructure] = React.useState(false)
   const pageRefs = React.useRef<(HTMLDivElement | null)[]>([])
   const canvasRefs = React.useRef<(HTMLCanvasElement | null)[]>([])
   const [handle, setHandle] = React.useState<number | null>(null)
@@ -169,7 +171,7 @@ export default function Editor() {
 
   // --- drawing -------------------------------------------------------------
 
-  const drawPage = React.useCallback((canvas: HTMLCanvasElement | null, page: PageModel | null, highlight: Paragraph | null, avail: number) => {
+  const drawPage = React.useCallback((canvas: HTMLCanvasElement | null, page: PageModel | null, highlight: Paragraph | null, avail: number, structure: boolean) => {
     if (!canvas || !page) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
@@ -214,6 +216,16 @@ export default function Editor() {
       const b = item.box
       const w = b.x1 - b.x0
       const h = b.y1 - b.y0
+
+      // The structure overlay is off unless asked for.
+      //
+      // Every non-paragraph block was drawn as a dashed box captioned with its
+      // kind, so a form covered in vector rules came up with the word "vector"
+      // printed across it a dozen times, over the content. That is inspection
+      // UI: useful when you want to see what the reconstruction found, and
+      // noise the rest of the time. Images keep their placeholder either way,
+      // because an image is content and there is no renderer to draw it with.
+      if ((item.type === 'block' || item.type === 'table') && !structure) continue
 
       if (item.type === 'block' || item.type === 'table' || item.type === 'image') {
         ctx.strokeStyle = `hsl(${muted} / 0.4)`
@@ -270,9 +282,9 @@ export default function Editor() {
     // Keying it to pageIndex meant scrolling moved the selection box onto the
     // next page, over a paragraph nobody had chosen.
     pages.forEach((p, i) =>
-      drawPage(canvasRefs.current[i], p, selected?.page === i ? selected.paragraph : null, avail),
+      drawPage(canvasRefs.current[i], p, selected?.page === i ? selected.paragraph : null, avail, structure),
     )
-  }, [pages, selected, drawPage, avail])
+  }, [pages, selected, drawPage, avail, structure])
 
   // How much width the sheet may use, watched rather than measured once.
   //
@@ -346,7 +358,7 @@ export default function Editor() {
     if (text === paragraph.text) return
     const range = minimalRange(paragraph.text, text)
     const out = run('Replace text', (m, h) =>
-      m.replaceText(h, pageIndex, paragraph.id.region, paragraph.id.index, range.start, range.end, range.text),
+      m.replaceText(h, pageIndex, paragraph.id, range.start, range.end, range.text),
     )
     if (out) {
       note('Replace text', out.fidelity, `${range.end - range.start} → ${range.text.length} characters`)
@@ -532,6 +544,16 @@ export default function Editor() {
           </Button>
         </Tooltip>
 
+        <Tooltip label="Outline what the reconstruction found: blocks, tables and their kinds">
+          <Button
+            variant={structure ? 'secondary' : 'ghost'}
+            size="sm"
+            onClick={() => setStructure((v) => !v)}
+          >
+            <Layers /> Structure
+          </Button>
+        </Tooltip>
+
         <Button variant="ghost" size="sm" className="text-destructive" onClick={() => setRedacting('')}>
           Redact…
         </Button>
@@ -709,6 +731,8 @@ export default function Editor() {
                 const n = run('Compact fonts', (m, h) => m.compactFonts(h))
                 if (n !== undefined) note('Compact fonts', 'exact', `${n} font(s) touched`)
               }}
+              structure={structure}
+              onStructure={() => setStructure((v) => !v)}
             />
           </div>
         </DialogContent>
@@ -1091,6 +1115,8 @@ function MobileTools({
   onFloor,
   onRedact,
   onCompact,
+  structure,
+  onStructure,
 }: {
   info: R.DocumentInfo | null
   page: PageModel | null
@@ -1101,6 +1127,8 @@ function MobileTools({
   onFloor: (v: string) => void
   onRedact: () => void
   onCompact: () => void
+  structure: boolean
+  onStructure: () => void
 }) {
   return (
     <div className="flex flex-col gap-3">
@@ -1120,6 +1148,14 @@ function MobileTools({
       </div>
 
       <div className="flex gap-2">
+        <Button
+          variant={structure ? 'secondary' : 'outline'}
+          size="sm"
+          className="flex-1"
+          onClick={onStructure}
+        >
+          <Layers /> Structure
+        </Button>
         <Button variant="outline" size="sm" className="flex-1" onClick={onCompact}>
           <Shrink /> Compact fonts
         </Button>

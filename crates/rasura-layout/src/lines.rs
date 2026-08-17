@@ -267,17 +267,59 @@ fn cluster_bucket(glyphs: Vec<PlacedGlyph>) -> Vec<Line> {
     clusters
         .into_iter()
         .filter(|c| !c.is_empty())
-        .map(|mut c| {
-            // Spec 7.4: sort by position within the line. Producers emit text
-            // out of visual order routinely -- footnote markers, ligature
-            // fixups, right-to-left runs -- and `run`/`index` on each glyph
-            // preserve the original operator order for patching.
-            c.sort_by(|a, b| {
-                a.tangent.partial_cmp(&b.tangent).unwrap_or(std::cmp::Ordering::Equal)
-            });
-            build_line(c)
-        })
+        .map(|c| build_line(in_reading_order(c)))
         .collect()
+}
+
+/// Order one line's glyphs for reading, keeping each show operation whole.
+///
+/// Spec 7.4 asks for position order within a line, because producers emit text
+/// out of visual order routinely: footnote markers, ligature fixups, columns
+/// written bottom-up. That was read as "sort the glyphs", and sorting glyphs
+/// across run boundaries interleaves them the moment two runs overlap in x.
+///
+/// A real form did exactly that. `Carmen Fari(n~a),` was drawn at x=50 in bold
+/// and `Chancellor` at x=112 in oblique, and the first run is about 65pt wide,
+/// so its comma sits at x≈113 -- past where the second run starts. Sorted by
+/// position alone the comma falls after the `C` and the page reads
+/// `Carmen Fari(n~a)C,hancellor`. Every overlapping label on that form came out
+/// the same way, and the confidence stayed `exact` throughout, because every
+/// glyph *was* mapped exactly. Only their order was wrong.
+///
+/// The unit of reading order is the run, not the character. One show operation
+/// lays its glyphs out itself and they are contiguous by construction, so
+/// nothing is gained by re-sorting inside one and correctness is lost. Runs are
+/// ordered by where they start, which is the original intent, and `index`
+/// orders within a run, which is what the producer said.
+fn in_reading_order(glyphs: Vec<PlacedGlyph>) -> Vec<PlacedGlyph> {
+    // Where each run begins along the baseline, and where it first appeared, so
+    // two runs starting at the same place keep a deterministic order.
+    let mut starts: Vec<(usize, f64, usize)> = Vec::new();
+    for (seen, g) in glyphs.iter().enumerate() {
+        match starts.iter_mut().find(|(r, _, _)| *r == g.run) {
+            Some((_, at, _)) => *at = at.min(g.tangent),
+            None => starts.push((g.run, g.tangent, seen)),
+        }
+    }
+
+    let key = |g: &PlacedGlyph| {
+        starts
+            .iter()
+            .find(|(r, _, _)| *r == g.run)
+            .map(|(_, at, seen)| (*at, *seen))
+            .unwrap_or((g.tangent, 0))
+    };
+
+    let mut out = glyphs;
+    out.sort_by(|a, b| {
+        let (at_a, seen_a) = key(a);
+        let (at_b, seen_b) = key(b);
+        at_a.partial_cmp(&at_b)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| seen_a.cmp(&seen_b))
+            .then_with(|| a.index.cmp(&b.index))
+    });
+    out
 }
 
 /// Fold small offset clusters into the line they belong to. Spec 7.4:

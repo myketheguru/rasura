@@ -62,11 +62,18 @@ export interface Wasm {
   pageContent(handle: number, page: number): PageModel
   fontRequirements(handle: number): FontInfo[]
   formFields(handle: number): FieldInfo[]
+  // Six parameters, and `paragraph` is the id from `page.paragraphs[]`.
+  //
+  // This declared seven, splitting the id into `region` and `index`, and the
+  // call site obliged with two `undefined`s -- so `text` arrived as a number
+  // and the module faulted on every edit. The module's own
+  // `rasura_wasm.d.ts` had the right signature the whole time; this file is
+  // hand-written and disagreed with it, and TypeScript can only check a
+  // declaration against its callers, never against the thing declared.
   replaceText(
     handle: number,
     page: number,
-    region: number,
-    index: number,
+    paragraph: number,
     from: number,
     to: number,
     text: string,
