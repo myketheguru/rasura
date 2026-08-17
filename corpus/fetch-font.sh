@@ -23,7 +23,15 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 dest="$root/corpus/fonts"
 mkdir -p "$dest"
 
-url="https://github.com/googlefonts/roboto-2/raw/$COMMIT/src/hinted/Roboto-Regular.ttf"
+# Fetched from `raw.githubusercontent.com`, not `github.com/.../raw/`.
+#
+# The redirect form worked for a year and then started returning 404 to
+# anonymous clients, six attempts in a row, on two separate CI runs. The repo,
+# the commit and the file were all still there -- the GitHub API reports this
+# exact URL as the file's `download_url` -- so the bytes were never the
+# problem, only the hop that used to reach them. This is the canonical host and
+# there is no redirect to lose.
+url="https://raw.githubusercontent.com/googlefonts/roboto-2/$COMMIT/src/hinted/Roboto-Regular.ttf"
 
 # Retry deliberately. This is a network fetch in the middle of a build gate, and
 # it has taken CI down twice with `curl: (56) Connection died` -- a dropped
@@ -36,7 +44,7 @@ get() {
 
 echo "font: fetching Roboto-Regular.ttf"
 get "$url" "$dest/Roboto-Regular.ttf"
-get "https://github.com/googlefonts/roboto-2/raw/$COMMIT/LICENSE" "$dest/Roboto-LICENSE.txt"
+get "https://raw.githubusercontent.com/googlefonts/roboto-2/$COMMIT/LICENSE" "$dest/Roboto-LICENSE.txt"
 
 echo "font: ready at $dest/Roboto-Regular.ttf"
 echo "  licence: $dest/Roboto-LICENSE.txt (Apache-2.0)"

@@ -15,7 +15,7 @@ $root = Split-Path -Parent $PSScriptRoot
 $dest = Join-Path $root "corpus/fonts"
 New-Item -ItemType Directory -Force $dest | Out-Null
 
-$base = "https://github.com/googlefonts/roboto-2/raw/$Commit"
+$base = "https://raw.githubusercontent.com/googlefonts/roboto-2/$Commit"
 
 Write-Host "font: fetching Roboto-Regular.ttf"
 Invoke-WebRequest "$base/src/hinted/Roboto-Regular.ttf" -OutFile (Join-Path $dest "Roboto-Regular.ttf")
