@@ -1,0 +1,5 @@
+# The regression baseline is recorded on the machine that gates — a developer's
+# or CI's — with `cargo run -p rasura-bench -- --update-baseline`. It is machine
+# specific, so committing one person's would make everyone else's run look like a
+# regression. CI caches it rather than versioning it here.
+baseline.txt

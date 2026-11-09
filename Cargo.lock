@@ -613,6 +613,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rasura-bench"
+version = "0.1.2"
+dependencies = [
+ "rasura",
+]
+
+[[package]]
 name = "rasura-content"
 version = "0.1.2"
 dependencies = [

@@ -9,6 +9,7 @@ members = [
     "crates/rasura-flow",
     "crates/rasura",
     "crates/rasura-wasm",
+    "harness/bench",
     "harness/contentwalk",
     "harness/invariants",
     "harness/textdiff",
