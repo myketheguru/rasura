@@ -160,15 +160,19 @@ pub fn open_document(
 
 /// Compose a document. Spec 11's `create`, unimplemented until now.
 ///
-/// `content` is an array of `{ kind, text }` — or `{ kind: "list", items }` —
-/// rather than a typed enum, because a `JsValue` is what crosses and inventing
-/// a class for three shapes would put a constructor on the JS side that has to
-/// stay in step with this one.
+/// `content` is an array of `{ kind, text }` — a heading or paragraph may give
+/// `spans: [{ text, bold?, italic? }]` instead of `text` for emphasis — or
+/// `{ kind: "list", items }`, rather than a typed enum, because a `JsValue` is
+/// what crosses and inventing a class for these shapes would put a constructor
+/// on the JS side that has to stay in step with this one.
 ///
-/// The typeface is required and is passed as bytes. There is no default: a
-/// document set in a font nobody embedded looks like whatever the reader has
-/// installed, which is the one thing a PDF is supposed to prevent. Returns the
-/// handle and what composing had to approximate.
+/// The regular typeface is required and is passed as bytes. There is no
+/// default: a document set in a font nobody embedded looks like whatever the
+/// reader has installed, which is the one thing a PDF is supposed to prevent.
+/// Bold, italic and bold-italic faces are optional and ride in `options` as
+/// `bold` / `italic` / `boldItalic` byte arrays. Returns the handle and what
+/// composing had to approximate, including the faces embedded and any the text
+/// asked for that the family did not supply.
 #[wasm_bindgen(js_name = createDocument)]
 pub fn create_document(
     content: JsValue,
@@ -191,6 +195,10 @@ pub fn create_document(
     // dropped, not substituted, and a caller who does not look at this will
     // ship a document with holes in it.
     set_str(&out, "missing", &report.missing.iter().collect::<String>());
+    // The faces embedded, regular first, and the faces the text asked for that
+    // the family did not supply — those runs were drawn regular, not faked.
+    set(&out, "faces", &convert::strings(report.faces.into_iter()));
+    set(&out, "substituted", &convert::strings(report.substituted.into_iter()));
     Ok(out.into())
 }
 

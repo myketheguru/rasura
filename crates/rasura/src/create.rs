@@ -29,7 +29,48 @@ use crate::error::{Code, Error, Result};
 use rasura_flow::compose;
 use rasura_flow::flow::{self, FlowDocument};
 
+pub use rasura_flow::compose::Family;
 pub use rasura_layout::frames::PageGeometry;
+
+/// A run of text with one emphasis, the unit a heading or paragraph is built
+/// from.
+///
+/// A whole paragraph is one plain [`Span`] in the common case; a paragraph with
+/// a bold word in it is three — plain, bold, plain. The emphasis is drawn in a
+/// real face from [`Options::family`], never a synthetic slant or weight: a
+/// `bold` span with no bold face supplied falls back to the regular one and is
+/// named in [`Composition::substituted`], not faked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Span {
+    pub text: String,
+    pub bold: bool,
+    pub italic: bool,
+}
+
+impl Span {
+    pub fn plain(text: impl Into<String>) -> Span {
+        Span { text: text.into(), bold: false, italic: false }
+    }
+
+    pub fn bold(text: impl Into<String>) -> Span {
+        Span { text: text.into(), bold: true, italic: false }
+    }
+
+    pub fn italic(text: impl Into<String>) -> Span {
+        Span { text: text.into(), bold: false, italic: true }
+    }
+
+    pub fn bold_italic(text: impl Into<String>) -> Span {
+        Span { text: text.into(), bold: true, italic: true }
+    }
+
+    fn to_inline(&self) -> flow::Inline {
+        flow::Inline::Text {
+            text: self.text.clone(),
+            emphasis: flow::Emphasis { bold: self.bold, italic: self.italic, invisible: false },
+        }
+    }
+}
 
 /// A block of a document to be composed.
 ///
@@ -42,10 +83,10 @@ pub enum Content {
     /// `level` is 1 to 6, as in HTML. Sizes come from [`Options::heading_sizes`].
     Heading {
         level: u8,
-        text: String,
+        spans: Vec<Span>,
     },
     Paragraph {
-        text: String,
+        spans: Vec<Span>,
     },
     /// Drawn as its lines, without bullets. Reported in
     /// [`Composition::approximated`].
@@ -55,24 +96,37 @@ pub enum Content {
 }
 
 impl Content {
+    /// A heading of one plain run. Use [`Content::heading_spans`] for emphasis.
     pub fn heading(level: u8, text: impl Into<String>) -> Content {
-        Content::Heading { level: level.clamp(1, 6), text: text.into() }
+        Content::Heading { level: level.clamp(1, 6), spans: vec![Span::plain(text)] }
     }
 
+    /// A heading built from styled runs.
+    pub fn heading_spans(level: u8, spans: Vec<Span>) -> Content {
+        Content::Heading { level: level.clamp(1, 6), spans }
+    }
+
+    /// A paragraph of one plain run. Use [`Content::paragraph_spans`] for emphasis.
     pub fn paragraph(text: impl Into<String>) -> Content {
-        Content::Paragraph { text: text.into() }
+        Content::Paragraph { spans: vec![Span::plain(text)] }
+    }
+
+    /// A paragraph built from styled runs.
+    pub fn paragraph_spans(spans: Vec<Span>) -> Content {
+        Content::Paragraph { spans }
     }
 
     fn to_block(&self) -> flow::Block {
         match self {
-            Content::Heading { level, text } => flow::Block::Heading {
+            Content::Heading { level, spans } => flow::Block::Heading {
                 level: *level,
-                inlines: vec![flow::Inline::text(text)],
+                inlines: spans.iter().map(Span::to_inline).collect(),
                 source: None,
             },
-            Content::Paragraph { text } => {
-                flow::Block::Paragraph { inlines: vec![flow::Inline::text(text)], source: None }
-            }
+            Content::Paragraph { spans } => flow::Block::Paragraph {
+                inlines: spans.iter().map(Span::to_inline).collect(),
+                source: None,
+            },
             Content::List { items } => flow::Block::List(flow::List {
                 items: items
                     .iter()
@@ -95,14 +149,19 @@ impl Content {
 pub struct Options {
     /// The page: size, margins and columns.
     pub geometry: PageGeometry,
-    /// The typeface, as a TrueType or OpenType file.
+    /// The typeface, as one or more TrueType/OpenType faces.
     ///
-    /// Required, and deliberately so. The standard 14 fonts need no embedding
-    /// and would make this optional, but a document set in one is a document
-    /// whose appearance depends on what the reader happens to have installed —
-    /// which is the opposite of what a PDF is for. A caller who wants that can
-    /// still have it by building the objects directly.
-    pub font: Vec<u8>,
+    /// The regular face is required, and deliberately so. The standard 14 fonts
+    /// need no embedding and would make this optional, but a document set in one
+    /// is a document whose appearance depends on what the reader happens to have
+    /// installed — which is the opposite of what a PDF is for. A caller who
+    /// wants that can still have it by building the objects directly.
+    ///
+    /// The bold, italic and bold-italic faces are optional. A document whose
+    /// text calls for a face the family does not supply is drawn in the regular
+    /// face and the gap is named in [`Composition::substituted`] — never slanted
+    /// or thickened synthetically, which would measure wrong.
+    pub family: Family,
     pub body_size: f64,
     /// Sizes for heading levels 1 to 6.
     pub heading_sizes: [f64; 6],
@@ -110,11 +169,17 @@ pub struct Options {
 }
 
 impl Options {
-    /// Compose in `font`, at defaults for everything else.
+    /// Compose in one face, at defaults for everything else. Bold and italic
+    /// runs fall back to this face and are reported as substituted.
     pub fn with_font(font: Vec<u8>) -> Options {
+        Options::with_family(Family::regular(&font))
+    }
+
+    /// Compose in `family`, at defaults for everything else.
+    pub fn with_family(family: Family) -> Options {
         Options {
             geometry: PageGeometry::default(),
-            font,
+            family,
             body_size: 11.0,
             heading_sizes: [24.0, 18.0, 14.0, 12.0, 11.0, 11.0],
             title: None,
@@ -140,6 +205,12 @@ pub struct Composition {
     /// `/StemV` cannot be measured from a TrueType file; it was estimated.
     /// Always true today, and reported rather than assumed.
     pub stem_v_estimated: bool,
+    /// The base font of every face embedded, regular first. One entry unless the
+    /// document used bold or italic and the family supplied those faces.
+    pub faces: Vec<String>,
+    /// Faces the text asked for that the family did not supply, so those runs
+    /// were drawn in the regular face. Named rather than faked.
+    pub substituted: Vec<String>,
 }
 
 impl Document {
@@ -164,10 +235,10 @@ impl Document {
         if content.is_empty() {
             return Err(Error::new(Code::InvalidArgument, "there is nothing to compose"));
         }
-        if opts.font.is_empty() {
+        if opts.family.regular.is_empty() {
             return Err(Error::new(
                 Code::FontUnavailable,
-                "composing needs a typeface: Options::font is empty",
+                "composing needs a typeface: Options::family has no regular face",
             ));
         }
 
@@ -182,9 +253,9 @@ impl Document {
         };
         layout.body.size = opts.body_size;
 
-        let composed = compose::compose(
+        let composed = compose::compose_family(
             &flow,
-            &opts.font,
+            &opts.family,
             &compose::Options {
                 geometry: opts.geometry.clone(),
                 layout,
@@ -214,6 +285,8 @@ impl Document {
                 base_font: report.base_font,
                 composite: report.composite,
                 stem_v_estimated: report.stem_v_guessed,
+                faces: report.faces,
+                substituted: report.substituted,
             },
         ))
     }
@@ -236,7 +309,11 @@ mod tests {
     use super::*;
 
     fn roboto() -> Option<Vec<u8>> {
-        std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../../corpus/fonts/Roboto-Regular.ttf"))
+        face("Roboto-Regular.ttf")
+    }
+
+    fn face(name: &str) -> Option<Vec<u8>> {
+        std::fs::read(format!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../corpus/fonts/{}"), name))
             .ok()
     }
 
@@ -294,6 +371,55 @@ mod tests {
         let saved = doc.save(&Default::default()).unwrap();
         let reopened = Document::open(saved.bytes).unwrap();
         assert!(reopened.page(0).unwrap().paragraphs()[0].text.contains("quick"));
+    }
+
+    #[test]
+    fn emphasis_is_composed_in_the_faces_the_family_supplies() {
+        let (Some(regular), Some(bold), Some(italic)) =
+            (face("Roboto-Regular.ttf"), face("Roboto-Bold.ttf"), face("Roboto-Italic.ttf"))
+        else {
+            eprintln!("skipped: run ./corpus/fetch-font.sh");
+            return;
+        };
+
+        let family = Family { regular, bold: Some(bold), italic: Some(italic), bold_italic: None };
+        let (doc, report) = Document::create(
+            &[Content::paragraph_spans(vec![
+                Span::plain("A line with a "),
+                Span::bold("bold"),
+                Span::plain(" word, an "),
+                Span::italic("italic"),
+                Span::plain(" one, and a "),
+                // No bold-italic face was supplied: this run falls back to the
+                // regular face and the gap is reported, not faked.
+                Span::bold_italic("both"),
+                Span::plain(" one."),
+            ])],
+            &Options::with_family(family),
+        )
+        .unwrap();
+
+        // Three faces embedded — regular, bold, italic — and reported.
+        assert!(report.faces.len() >= 3, "faces: {:?}", report.faces);
+        // The bold-italic run had no face, so it was drawn regular and named.
+        assert!(!report.substituted.is_empty(), "the missing bold-italic face is reported");
+        assert!(report.missing.is_empty(), "every glyph was drawable: {report:?}");
+
+        // It still reads back and reopens like any other document.
+        assert_eq!(doc.page_count(), 1);
+        let saved = doc.save(&Default::default()).unwrap();
+        assert_eq!(Document::open(saved.bytes).unwrap().page_count(), 1);
+    }
+
+    #[test]
+    fn a_family_of_one_face_substitutes_nothing_until_asked() {
+        let Some(font) = roboto() else { return };
+        // Plain text in a one-face family: nothing to substitute.
+        let (_, report) =
+            Document::create(&[Content::paragraph("Plain text.")], &Options::with_font(font))
+                .unwrap();
+        assert_eq!(report.faces.len(), 1, "one face embedded: {:?}", report.faces);
+        assert!(report.substituted.is_empty(), "plain text asks for no other face");
     }
 
     #[test]

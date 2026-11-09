@@ -31,10 +31,25 @@ export type PdfErrorCode =
 
 export const CODES: readonly PdfErrorCode[];
 
+/**
+ * A run of text with one emphasis. A heading or paragraph is built from these
+ * when it needs bold or italic. The emphasis is drawn in a real face from the
+ * family (`bold` / `italic` / `boldItalic` in {@link CreateOptions}); a run
+ * whose face the family omits is drawn regular and named in
+ * `Composition.substituted`, never slanted or thickened synthetically.
+ */
+export interface Span {
+  text: string;
+  bold?: boolean;
+  italic?: boolean;
+}
+
 /** A block of a document to be composed. Spec 9.2. */
 export type Content =
   | { kind: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; text: string }
+  | { kind: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; spans: readonly Span[] }
   | { kind: "paragraph"; text: string }
+  | { kind: "paragraph"; spans: readonly Span[] }
   /** Drawn as its lines, without bullets; counted in `Composition.approximated`. */
   | { kind: "list"; items: readonly string[] };
 
@@ -51,6 +66,15 @@ export interface CreateOptions extends OpenOptions {
   headingSizes?: readonly number[];
   /** `/Info /Title`, which is what a viewer shows in its window bar. */
   title?: string;
+  /**
+   * The bold face, as a TrueType/OpenType file. Optional: without it, bold
+   * runs are drawn in the regular face and named in `Composition.substituted`.
+   */
+  bold?: ArrayBuffer | Uint8Array | Blob;
+  /** The italic face. Optional, like {@link CreateOptions.bold}. */
+  italic?: ArrayBuffer | Uint8Array | Blob;
+  /** The bold-italic face. Optional, like {@link CreateOptions.bold}. */
+  boldItalic?: ArrayBuffer | Uint8Array | Blob;
 }
 
 /** What composing did, beyond producing the document. */
@@ -70,6 +94,17 @@ export interface Composition {
   composite: boolean;
   /** `/StemV` cannot be measured from a TrueType file, so it was estimated. */
   stemVEstimated: boolean;
+  /**
+   * The base font of every face embedded, regular first. One entry unless the
+   * document used bold or italic and the family supplied those faces.
+   */
+  faces: string[];
+  /**
+   * Faces the text asked for that the family did not supply, so those runs were
+   * drawn in the regular face. Named rather than faked — a bold run set regular
+   * is a compromise you are told about, not a synthetic bold that measures wrong.
+   */
+  substituted: string[];
 }
 
 export interface Composed {

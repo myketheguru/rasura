@@ -57,8 +57,8 @@ const CONSTRUCTORS: Item[] = [
     signature: 'pub fn create(content: &[Content], opts: &create::Options) -> Result<(Document, Composition)>',
     summary: 'Compose a document that did not exist.',
     params: [
-      { name: 'content', type: '&[Content]', desc: 'Heading, Paragraph or List blocks, in reading order.' },
-      { name: 'opts.font', type: 'Vec<u8>', desc: 'A TrueType or OpenType file. Required, embedded, and subset to the characters drawn.' },
+      { name: 'content', type: '&[Content]', desc: 'Heading, Paragraph or List blocks, in reading order. Headings and paragraphs carry styled Spans for bold and italic.' },
+      { name: 'opts.family', type: 'Family', desc: 'A regular TrueType/OpenType face (required) and optional bold, italic and bold-italic faces. Each is embedded and subset to the characters drawn. A face the text needs but the family omits is drawn regular and named in Composition::substituted.' },
       { name: 'opts.geometry', type: 'PageGeometry', desc: 'Page size, margins, columns and gutter.' },
       { name: 'opts.body_size', type: 'f64', desc: 'Body text size in points.' },
       { name: 'opts.heading_sizes', type: '[f64; 6]', desc: 'Sizes for heading levels 1 to 6.' },

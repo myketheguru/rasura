@@ -98,12 +98,16 @@ export class Pdf {
    * character drops it rather than substituting one, and a caller who never
    * looks at `missing` ships a document with holes in it.
    *
-   * The typeface is required. A document set in a font nobody embedded looks
-   * like whatever the reader happens to have installed, which is the one thing
-   * a PDF exists to prevent.
+   * The regular typeface is required. A document set in a font nobody embedded
+   * looks like whatever the reader happens to have installed, which is the one
+   * thing a PDF exists to prevent. Bold, italic and bold-italic faces are
+   * optional (`opts.bold` / `opts.italic` / `opts.boldItalic`); a heading or
+   * paragraph carries emphasis by giving `spans` instead of `text`. A face the
+   * text needs but the family omits is drawn regular and named in
+   * `report.substituted`, never faked.
    *
    * @param {import("../types/index.d.ts").Content[]} content
-   * @param {ArrayBuffer | Uint8Array | Blob} font
+   * @param {ArrayBuffer | Uint8Array | Blob} font The regular face.
    * @param {import("../types/index.d.ts").CreateOptions} [opts]
    * @returns {Promise<import("../types/index.d.ts").Composed>}
    */
@@ -117,13 +121,25 @@ export class Pdf {
       throw new PdfError("font-unavailable", "composing needs a typeface; none was given");
     }
 
+    // The bold, italic and bold-italic faces are optional. They ride in the
+    // options object as bytes, resolved here from whatever the caller passed
+    // (ArrayBuffer, Uint8Array or Blob), so the regular face stays the one
+    // required argument. A face the document asks for but the family omits is
+    // drawn in the regular face and named in `report.substituted`, never faked.
+    const wire = { ...opts };
+    for (const key of ["bold", "italic", "boldItalic"]) {
+      if (opts[key] != null) {
+        wire[key] = await toBytes(opts[key]);
+      }
+    }
+
     let result;
     try {
       // The typeface is **not** transferred, unlike a document's bytes in
       // `open`. A document is the caller's own file and may be twenty megabytes;
       // a typeface is a few hundred kilobytes and is very often the same one for
       // the next document, so detaching it would break the obvious loop.
-      result = await transport.request("create", [content, bytes, opts], []);
+      result = await transport.request("create", [content, bytes, wire], []);
     } catch (e) {
       await transport.terminate();
       throw e;

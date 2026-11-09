@@ -269,6 +269,17 @@ fn bool_or(source: &JsValue, key: &str, fallback: bool) -> bool {
     get(source, key).as_bool().unwrap_or(fallback)
 }
 
+/// A field holding a `Uint8Array`, copied to a `Vec`. `None` when the field is
+/// absent or not bytes — an empty array counts as absent, since a face of no
+/// bytes is one the caller did not supply.
+fn opt_bytes(source: &JsValue, key: &str) -> Option<Vec<u8>> {
+    let array = get(source, key).dyn_into::<Uint8Array>().ok()?;
+    if array.length() == 0 {
+        return None;
+    }
+    Some(array.to_vec())
+}
+
 /// An RGB triple as `[r, g, b]`, each 0..1.
 fn opt_rgb(source: &JsValue, key: &str) -> Result<Option<(f64, f64, f64)>, JsValue> {
     let value = get(source, key);
@@ -299,8 +310,12 @@ fn points(source: &JsValue, key: &str) -> Vec<(f64, f64)> {
     out
 }
 
-/// `[{ kind: "heading", level, text } | { kind: "paragraph", text } |
-/// { kind: "list", items }]` to the content list `create` takes.
+/// `[{ kind: "heading", level, text|spans } | { kind: "paragraph", text|spans }
+/// | { kind: "list", items }]` to the content list `create` takes.
+///
+/// A heading or paragraph is either one plain string (`text`) or a run of
+/// styled spans (`spans: [{ text, bold?, italic? }]`). `spans` wins when both
+/// are given; emphasis is drawn in a real face from the family, never faked.
 ///
 /// An unknown `kind` is refused by name rather than skipped. Dropping a block
 /// nobody recognised would compose a document quietly missing a section, and
@@ -316,16 +331,15 @@ pub fn to_content(source: &JsValue) -> Result<Vec<rasura::create::Content>, JsVa
     let mut out = Vec::with_capacity(array.length() as usize);
     for (i, item) in array.iter().enumerate() {
         let kind = opt_str(&item, "kind").unwrap_or_default();
-        let text = opt_str(&item, "text").unwrap_or_default();
         out.push(match kind.as_str() {
-            "heading" => Content::Heading {
+            "heading" => Content::heading_spans(
                 // Clamped rather than refused: a level of 0 or 9 is a caller
                 // counting from the wrong end, not a document that cannot be
                 // made, and the nearest real level is what they meant.
-                level: (num_or(&item, "level", 1.0).clamp(1.0, 6.0)) as u8,
-                text,
-            },
-            "paragraph" => Content::Paragraph { text },
+                (num_or(&item, "level", 1.0).clamp(1.0, 6.0)) as u8,
+                to_spans(&item),
+            ),
+            "paragraph" => Content::paragraph_spans(to_spans(&item)),
             "list" => Content::List {
                 items: get(&item, "items")
                     .dyn_into::<Array>()
@@ -343,16 +357,45 @@ pub fn to_content(source: &JsValue) -> Result<Vec<rasura::create::Content>, JsVa
     Ok(out)
 }
 
-/// `{ pageSize, margin, columns, bodySize, headingSizes, title }` to
-/// composition options. Every field is optional but the font, which is a
-/// separate argument because it is bytes rather than a number.
+/// The styled runs of a heading or paragraph. `spans` when the caller gave an
+/// array of them, otherwise one plain span from `text` — so the old text-only
+/// shape still composes, as one unemphasised run.
+fn to_spans(item: &JsValue) -> Vec<rasura::create::Span> {
+    use rasura::create::Span;
+
+    if let Ok(spans) = get(item, "spans").dyn_into::<Array>() {
+        if spans.length() > 0 {
+            return spans
+                .iter()
+                .map(|s| Span {
+                    text: opt_str(&s, "text").unwrap_or_default(),
+                    bold: bool_or(&s, "bold", false),
+                    italic: bool_or(&s, "italic", false),
+                })
+                .collect();
+        }
+    }
+    vec![Span::plain(opt_str(item, "text").unwrap_or_default())]
+}
+
+/// `{ pageSize, margin, columns, bodySize, headingSizes, title, bold, italic,
+/// boldItalic }` to composition options. The regular face is a separate
+/// argument because it is required; the bold, italic and bold-italic faces ride
+/// in the options as byte arrays because they are optional and most documents
+/// have none. Every field is optional but the regular face.
 pub fn to_create_options(
     source: &JsValue,
     font: Vec<u8>,
 ) -> Result<rasura::create::Options, JsValue> {
-    use rasura::create::{Options, PageGeometry};
+    use rasura::create::{Family, Options, PageGeometry};
 
-    let mut opts = Options::with_font(font);
+    let family = Family {
+        regular: font,
+        bold: opt_bytes(source, "bold"),
+        italic: opt_bytes(source, "italic"),
+        bold_italic: opt_bytes(source, "boldItalic"),
+    };
+    let mut opts = Options::with_family(family);
     if source.is_undefined() || source.is_null() {
         return Ok(opts);
     }

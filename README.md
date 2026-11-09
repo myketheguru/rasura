@@ -82,23 +82,38 @@ the measure, the leading, where lines break, where pages break, and keeps a
 heading with the section under it.
 
 ```js
-const font = await fetch('/Inter-Regular.ttf').then((r) => r.arrayBuffer())
+const load = (u) => fetch(u).then((r) => r.arrayBuffer())
+const [regular, bold] = await Promise.all([
+  load('/Inter-Regular.ttf'),
+  load('/Inter-Bold.ttf'),
+])
 
 const { document, report } = await Pdf.create(
   [
     { kind: 'heading', level: 1, text: 'Invoice 0042' },
-    { kind: 'paragraph', text: 'Due 30 days from receipt.' },
+    {
+      kind: 'paragraph',
+      // A paragraph carries emphasis by giving `spans` instead of `text`.
+      spans: [
+        { text: 'Due ' },
+        { text: '30 days', bold: true },
+        { text: ' from receipt.' },
+      ],
+    },
     { kind: 'list', items: ['Design, 12 hours', 'Build, 30 hours'] },
   ],
-  font,
-  { pageSize: 'a4' },
+  regular,
+  { pageSize: 'a4', bold },
 )
 ```
 
-The typeface is embedded and subset to the characters actually drawn. 515 KB of
-Roboto becomes 14.5 KB for the two dozen glyphs a short document uses. Text
-outside WinAnsi gets a Type0 font automatically, so Greek and Latin share one
-document without you choosing.
+Name a regular face and, optionally, `bold` / `italic` / `boldItalic`. Emphasis
+is drawn in the real face you supply — a bold run with no bold face is drawn
+regular and named in `report.substituted`, never a synthetic slant that would
+measure wrong. Each face is embedded and subset to the characters actually
+drawn: 515 KB of Roboto becomes 14.5 KB for the two dozen glyphs a short
+document uses. Text outside WinAnsi gets a Type0 font automatically, so Greek
+and Latin share one document without you choosing.
 
 ## Three rules
 
