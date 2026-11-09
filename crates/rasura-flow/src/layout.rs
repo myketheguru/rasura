@@ -193,6 +193,23 @@ pub struct PlacedLine {
     pub marker: Option<Marker>,
 }
 
+/// The rules of a table: where the lines between cells go.
+///
+/// Positions are in the layout's own downward device space, the same as every
+/// rect here — the emitter flips them into PDF's upward space when it draws. A
+/// table is the one block whose structure is lines rather than text, so it
+/// carries the geometry those lines need and nothing else does.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Grid {
+    /// The x of every vertical rule: the left border, the rules between columns,
+    /// and the right border — so `columns.len()` is the column count plus one.
+    pub columns: Vec<f64>,
+    /// The y of every horizontal rule, top border to bottom border.
+    pub rows: Vec<f64>,
+    /// Whether the first row is a header, which gets a heavier rule beneath it.
+    pub header: bool,
+}
+
 /// Where a block was put.
 #[derive(Debug, Clone)]
 pub struct PlacedBlock {
@@ -205,6 +222,8 @@ pub struct PlacedBlock {
     pub lines: Vec<PlacedLine>,
     /// True when this is the continuation of a block split across frames.
     pub continued: bool,
+    /// The table rules, when this block is a table. `None` for everything else.
+    pub grid: Option<Grid>,
 }
 
 impl PlacedBlock {
@@ -450,9 +469,18 @@ pub fn layout(
         let line_height = measurer.line_height(style);
         let lines = break_lines(&block.text(), measure, style, measurer);
 
-        // Blocks that cannot be split occupy their whole height or move. A list
-        // lays its items out here, where the item boundaries still exist, so each
-        // gets a marker and a hanging indent; everything else atomic is its text.
+        // Blocks that cannot be split occupy their whole height or move. A table
+        // is placed as a grid of cells with rules; a list lays its items out
+        // here, where the item boundaries still exist, so each gets a marker and
+        // a hanging indent; everything else atomic is its text.
+        if let Block::Table(table) = block {
+            place_table(
+                &mut out, &mut cursor, &page_frames, index, table, line_height, style, opts,
+                measurer, &mut report,
+            );
+            index += 1;
+            continue;
+        }
         if !splittable(block) {
             let specs: Vec<LineSpec> = match block {
                 Block::List(list) => list_specs(list, measure, style, measurer),
@@ -535,6 +563,7 @@ pub fn layout(
             rect: Rect::new(frame_rect.x0, cursor.y, frame_rect.x1, cursor.y + height),
             lines: position(&placed, frame_rect, cursor.y, line_height, style),
             continued: false,
+            grid: None,
         });
         report.blocks_placed += 1;
         cursor.y += height + opts.block_gap;
@@ -617,6 +646,7 @@ fn place_atomic(
         rect: Rect::new(frame.x0, cursor.y, frame.x1, cursor.y + height),
         lines: position_specs(specs, frame, cursor.y, line_height, style),
         continued: false,
+        grid: None,
     });
     report.blocks_placed += 1;
     cursor.y += height + opts.block_gap;
@@ -656,6 +686,7 @@ fn place_continuation(
             rect: Rect::new(frame.x0, cursor.y, frame.x1, cursor.y + height),
             lines: position(&placed, frame, cursor.y, line_height, style),
             continued: true,
+            grid: None,
         });
         report.blocks_placed += 1;
         cursor.y += height + opts.block_gap;
@@ -667,6 +698,113 @@ fn place_continuation(
         report.blocks_split += 1;
         advance(out, cursor, frames);
     }
+}
+
+/// Padding between a cell's rules and its text, in points.
+const CELL_PAD: f64 = 2.0;
+
+/// Place a table as a grid of cells with rules.
+///
+/// Columns are equal width across the frame — the honest simple answer, where
+/// sizing columns to their content is a measure-twice refinement the drawing
+/// does not need to be correct. Each cell's text is wrapped inside its column,
+/// a row is as tall as its tallest cell, and the rule positions are recorded on
+/// the block for the emitter to stroke. Placed atomically, like every other
+/// block that cannot be divided: it moves to the next frame if it does not fit
+/// and is reported overfull if it fits in none.
+#[allow(clippy::too_many_arguments)]
+fn place_table(
+    out: &mut Layout,
+    cursor: &mut Cursor,
+    frames: &[Frame],
+    source: usize,
+    table: &crate::flow::Table,
+    line_height: f64,
+    style: TextStyle,
+    opts: &Options,
+    measurer: &impl Measurer,
+    report: &mut Report,
+) {
+    let frame = frames[cursor.frame].rect;
+    let ncols = table.rows.iter().map(|r| r.len()).max().unwrap_or(0).max(1);
+    let col_width = frame.width() / ncols as f64;
+    let text_measure = (col_width - 2.0 * CELL_PAD).max(1.0);
+
+    // Wrap every cell once, and let each row be as tall as its tallest cell.
+    let rows_lines: Vec<Vec<Vec<String>>> = table
+        .rows
+        .iter()
+        .map(|row| {
+            (0..ncols)
+                .map(|c| {
+                    let text = row.get(c).map(|cell| cell.text()).unwrap_or_default();
+                    break_lines(&text, text_measure, style, measurer)
+                })
+                .collect()
+        })
+        .collect();
+    let row_heights: Vec<f64> = rows_lines
+        .iter()
+        .map(|cols| {
+            let max_lines = cols.iter().map(|l| l.len().max(1)).max().unwrap_or(1);
+            max_lines as f64 * line_height + 2.0 * CELL_PAD
+        })
+        .collect();
+    let total_height: f64 = row_heights.iter().sum();
+
+    // Atomic placement, exactly as `place_atomic`: move if it does not fit here
+    // and would fit in an empty frame; report overfull if it fits in none.
+    let available = frame.y1 - cursor.y;
+    if total_height > available {
+        if total_height <= frame.height() {
+            advance(out, cursor, frames);
+        } else {
+            report.overfull += 1;
+        }
+    }
+
+    let frame = frames[cursor.frame].rect;
+    let top = cursor.y;
+    let mut placed_lines = Vec::new();
+    let mut rules_y = Vec::with_capacity(row_heights.len() + 1);
+    let mut y = top;
+    for (r, cols) in rows_lines.iter().enumerate() {
+        rules_y.push(y);
+        for (c, cell_lines) in cols.iter().enumerate() {
+            let cell_x = frame.x0 + c as f64 * col_width + CELL_PAD;
+            for (j, text) in cell_lines.iter().enumerate() {
+                let line_top = y + CELL_PAD + j as f64 * line_height;
+                placed_lines.push(PlacedLine {
+                    text: text.clone(),
+                    style,
+                    marker: None,
+                    rect: Rect::new(
+                        cell_x,
+                        line_top,
+                        cell_x + text_measure,
+                        line_top + line_height,
+                    ),
+                });
+            }
+        }
+        y += row_heights[r];
+    }
+    rules_y.push(y);
+
+    let columns: Vec<f64> = (0..=ncols).map(|c| frame.x0 + c as f64 * col_width).collect();
+    let grid = Grid { columns, rows: rules_y, header: table.has_header };
+
+    out.blocks.push(PlacedBlock {
+        source,
+        page: cursor.page,
+        frame: cursor.frame,
+        rect: Rect::new(frame.x0, top, frame.x1, y),
+        lines: placed_lines,
+        continued: false,
+        grid: Some(grid),
+    });
+    report.blocks_placed += 1;
+    cursor.y = y + opts.block_gap;
 }
 
 /// One line to place, before it is given an absolute position.
@@ -1189,6 +1327,59 @@ mod tests {
             block.lines.iter().any(|l| l.marker.is_none() && (l.rect.x0 - text_x).abs() < 0.01),
             "a wrapped continuation line should share the item's text indent"
         );
+    }
+
+    fn table(rows: &[&[&str]], has_header: bool) -> Block {
+        use crate::flow::{Cell, Table};
+        Block::Table(Table {
+            rows: rows
+                .iter()
+                .map(|r| r.iter().map(|t| Cell { blocks: vec![para(t)] }).collect())
+                .collect(),
+            has_header,
+            source: None,
+        })
+    }
+
+    #[test]
+    fn a_table_is_placed_as_a_grid_of_equal_columns_with_rules() {
+        let t = table(
+            &[&["Name", "Qty", "Price"], &["Apples", "3", "1.50"], &["Bread", "1", "2.00"]],
+            true,
+        );
+        let (placed, _) = layout(&doc(vec![t]), &one_column(), &Options::default(), &Standard14);
+        let block = &placed.blocks[0];
+        let grid = block.grid.as_ref().expect("a table carries its rules");
+
+        // Three columns and three rows: one more rule than cells in each axis.
+        assert_eq!(grid.columns.len(), 4, "3 columns need 4 vertical rules");
+        assert_eq!(grid.rows.len(), 4, "3 rows need 4 horizontal rules");
+        assert!(grid.header);
+
+        // The columns are equal width and span the frame measure, 72..540.
+        assert!((grid.columns[0] - 72.0).abs() < 0.01, "{}", grid.columns[0]);
+        assert!((grid.columns[3] - 540.0).abs() < 0.01, "{}", grid.columns[3]);
+        let w = grid.columns[1] - grid.columns[0];
+        for pair in grid.columns.windows(2) {
+            assert!((pair[1] - pair[0] - w).abs() < 0.01, "columns are equal width");
+        }
+
+        // Every cell's text reached the placement, in some column.
+        let joined =
+            block.lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join(" ");
+        for cell in ["Name", "Price", "Apples", "2.00"] {
+            assert!(joined.contains(cell), "cell {cell:?} missing from {joined:?}");
+        }
+    }
+
+    #[test]
+    fn a_ragged_row_is_padded_to_the_column_count() {
+        // A row with fewer cells than the widest must not make a narrower grid,
+        // or the rules would not line up down the table.
+        let t = table(&[&["a", "b", "c"], &["only one"]], false);
+        let (placed, _) = layout(&doc(vec![t]), &one_column(), &Options::default(), &Standard14);
+        let grid = placed.blocks[0].grid.as_ref().unwrap();
+        assert_eq!(grid.columns.len(), 4, "the short row still spans three columns");
     }
 
     #[test]

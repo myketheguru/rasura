@@ -21,12 +21,15 @@
 //! one font's metrics and drawing with another's is the ordinary way for
 //! composed text to end up overflowing its column.
 //!
-//! # What is not composed
+//! # What is and is not composed
 //!
-//! Tables, lists and figures are placed as their text: the layout engine gives
-//! them a rectangle and this draws the lines in it, without rules, bullets or
-//! images. They are not silently dropped — [`Report::approximated`] counts
-//! them — but a caller wanting a real table wants more than this does.
+//! Lists are drawn with their markers and a hanging indent, and tables as a grid
+//! of equal-width columns with their rules stroked — so neither is an
+//! approximation any more. A figure is still placed as its alt text without the
+//! image, which is a codec problem this crate does not have; it is counted in
+//! [`Report::approximated`] rather than dropped. Equal-width columns are the one
+//! simplification that remains in a table: sizing columns to their content is a
+//! refinement the rules do not need in order to be right.
 
 use crate::flow::{Block, FlowDocument};
 use crate::layout::{self, Layout};
@@ -137,15 +140,13 @@ pub fn compose(
     let mut report = Report {
         pages: placed.pages,
         blocks: placed.blocks.len(),
-        // Lists are drawn with their markers now, so they are no longer
-        // approximated; tables (no rules yet) and figures (no image) still are.
+        // Lists have their markers and tables their rules now, so neither is
+        // approximated; a figure, drawn without its image, still is.
         approximated: placed
             .blocks
             .iter()
             .filter(|b| {
-                flow.blocks.get(b.source).is_some_and(|s| {
-                    matches!(s, Block::Table(_) | Block::Figure { .. })
-                })
+                flow.blocks.get(b.source).is_some_and(|s| matches!(s, Block::Figure { .. }))
             })
             .count(),
         missing: embedded.missing.clone(),
@@ -248,8 +249,44 @@ fn draw_page(
             canvas.text_line(&font, line.style.size, line.rect.x0, baseline, &codes);
             lines += 1;
         }
+
+        // A table's rules, stroked after its cell text. The grid is in the
+        // layout's downward space, so each y flips into PDF's upward space.
+        if let Some(grid) = &block.grid {
+            draw_grid(&mut canvas, grid, height);
+        }
     }
     (canvas.finish().unwrap_or_default(), lines, dropped)
+}
+
+/// Stroke a table's rules: a border, a rule between every pair of rows and of
+/// columns, and a heavier one beneath a header row.
+fn draw_grid(canvas: &mut Canvas, grid: &crate::layout::Grid, height: f64) {
+    let (Some(&left), Some(&right)) = (grid.columns.first(), grid.columns.last()) else {
+        return;
+    };
+    let (Some(&first_row), Some(&last_row)) = (grid.rows.first(), grid.rows.last()) else {
+        return;
+    };
+
+    canvas.stroke_rgb(0.0, 0.0, 0.0);
+
+    // Horizontal rules, top border to bottom. The rule under a header row is
+    // drawn heavier, which is the one piece of table styling worth the bytes.
+    for (i, &y) in grid.rows.iter().enumerate() {
+        canvas.line_width(if grid.header && i == 1 { 1.0 } else { 0.5 });
+        canvas.move_to(left, height - y);
+        canvas.line_to(right, height - y);
+        canvas.stroke();
+    }
+
+    // Vertical rules, left border to right.
+    canvas.line_width(0.5);
+    for &x in &grid.columns {
+        canvas.move_to(x, height - first_row);
+        canvas.line_to(x, height - last_row);
+        canvas.stroke();
+    }
 }
 
 /// The characters list markers draw with, which no block's text contains.
@@ -433,6 +470,43 @@ mod tests {
         assert!(text.contains("apples") && text.contains("fresh bread"), "{text:?}");
         // The ordered list's numbers were drawn onto the page, in sequence.
         assert!(text.contains("1.") && text.contains("3."), "numbered markers drawn: {text:?}");
+    }
+
+    #[test]
+    fn a_table_is_composed_with_rules_and_is_not_approximated() {
+        let Some(font) = roboto() else {
+            eprintln!("skipped: run ./corpus/fetch-font.sh");
+            return;
+        };
+        use crate::flow::{Cell, Table};
+        let cell = |t: &str| Cell {
+            blocks: vec![Block::Paragraph { inlines: vec![Inline::text(t)], source: None }],
+        };
+        let table = Block::Table(Table {
+            rows: vec![
+                vec![cell("Item"), cell("Price")],
+                vec![cell("Apples"), cell("1.50")],
+                vec![cell("Bread"), cell("2.00")],
+            ],
+            has_header: true,
+            source: None,
+        });
+        let flow = FlowDocument { blocks: vec![table], ..FlowDocument::default() };
+        let (doc, report) = compose(&flow, &font, &Options::default()).unwrap();
+
+        assert_eq!(report.approximated, 0, "a table is drawn with rules, not approximated");
+        assert_eq!(report.dropped, 0, "{:?}", report.missing);
+
+        let saved = rasura_cos::save(&doc, &rasura_cos::SaveOptions::default()).unwrap();
+        let reopened = Document::open(saved.bytes).expect("what was composed reopens");
+        // The stroked rules did not malform the content stream.
+        assert_eq!(reopened.leniencies(), Vec::new());
+
+        let tree = rasura_content::page::pages(&reopened).unwrap();
+        let text = rasura_layout::page_text(&reopened, &tree.pages[0]);
+        for word in ["Item", "Price", "Apples", "2.00"] {
+            assert!(text.contains(word), "cell {word:?} missing from page: {text:?}");
+        }
     }
 
     #[test]
