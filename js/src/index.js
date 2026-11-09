@@ -659,6 +659,52 @@ export class Session {
     return await this._doc._transport.request("sessionStatus", [this._doc._handle]);
   }
 
+  /**
+   * The operations staged so far, as replayable data. Spec 9.1.
+   *
+   * Not the undo stack — that is byte images, the inverse of each edit, and the
+   * wrong thing to persist. These are the *forward* operations, as plain
+   * objects keyed by `op`: `JSON.stringify(await session.ops())` is a valid,
+   * readable edit history you can store instead of a second copy of the file,
+   * transmit for collaboration, or diff for an audit.
+   *
+   * Replay them with {@link Session#applyOps} on a session opened over the same
+   * original bytes to reconstruct the edited document.
+   *
+   * @returns {Promise<import("../types/index.d.ts").EditOp[]>}
+   */
+  async ops() {
+    this._doc._live();
+    await this._configured;
+    return await this._doc._transport.request("sessionOps", [this._doc._handle]);
+  }
+
+  /**
+   * Replay a serialised op log onto this session. Spec 9.1.
+   *
+   * Reconstructs an edit captured with {@link Session#ops}. The coordinates are
+   * resolved against the document as this session has it, so a log replayed over
+   * the **same original bytes** it was captured on reproduces the edit exactly —
+   * that is the contract, and it is why the log carries the library version that
+   * wrote it. Replay stops at the first operation that is refused, with that
+   * operation's `PdfError`, rather than leaving a half-applied document.
+   *
+   * ```js
+   * const doc = await Pdf.open(originalBytes);   // the bytes the ops were captured on
+   * const session = doc.edit();
+   * await session.applyOps(savedOps);
+   * const { bytes } = await session.commit();    // the reconstructed document
+   * ```
+   *
+   * @param {import("../types/index.d.ts").EditOp[]} ops
+   * @returns {Promise<import("../types/index.d.ts").SessionStatus>} what is now staged
+   */
+  async applyOps(ops) {
+    this._doc._live();
+    await this._configured;
+    return await this._doc._transport.request("replayOps", [this._doc._handle, ops]);
+  }
+
   /** Undo everything and close the session. */
   async rollback() {
     this._doc._live();

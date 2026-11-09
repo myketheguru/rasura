@@ -630,6 +630,39 @@ pub fn session_status(handle: u32) -> Result<JsValue, JsValue> {
     })
 }
 
+/// The forward op log: the operations staged so far, as replayable data.
+///
+/// Spec 9.1's op log, carried as the *forward* operation rather than its byte
+/// inverse — the shape a caller stores, diffs, or hands back to [`replay_ops`].
+/// Read without resuming the session, like [`session_status`], since it only
+/// observes.
+#[wasm_bindgen(js_name = sessionOps)]
+pub fn session_ops(handle: u32) -> Result<JsValue, JsValue> {
+    OPEN.with(|r| {
+        let registry = r.borrow();
+        let slot = registry.documents.get(&handle).ok_or_else(|| missing(handle))?;
+        match &slot.session {
+            Some(state) => Ok(convert::ops(state.ops())),
+            None => Ok(convert::ops(&[])),
+        }
+    })
+}
+
+/// Replay a serialised op log onto the session, reconstructing its edits.
+///
+/// Spec 9.1. The ops carry the same flat coordinates the live operations use,
+/// resolved against the document as this session has it — so a log captured on
+/// one document and replayed on the same bytes reproduces the edit exactly.
+/// Stops at the first op that is refused, with that op's error, rather than
+/// leaving a half-applied document that is neither the original nor the edited
+/// one. Returns what is now staged, the shape [`session_status`] returns.
+#[wasm_bindgen(js_name = replayOps)]
+pub fn replay_ops(handle: u32, ops: JsValue) -> Result<JsValue, JsValue> {
+    let ops = convert::to_ops(&ops)?;
+    with_session(handle, |session| session.apply_all(&ops).map_err(convert::from_error))?;
+    session_status(handle)
+}
+
 /// Undo everything staged and close the session. Spec 9.1.
 #[wasm_bindgen(js_name = rollbackSession)]
 pub fn rollback_session(handle: u32) -> Result<(), JsValue> {

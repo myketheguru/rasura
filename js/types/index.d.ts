@@ -414,6 +414,30 @@ export interface SessionStatus {
   readonly closed: boolean;
 }
 
+/**
+ * One recorded operation, as replayable data — the serialisable form of a
+ * session's forward history. See {@link Session#ops}.
+ *
+ * `op` is the method name. Coordinates are the flat, caller-facing ones: a page
+ * index, and the position of a paragraph, image or table on that page. They are
+ * exact against the document the ops were captured on, which is why replay is
+ * defined against the same original bytes.
+ */
+export type EditOp =
+  | { op: "replaceText"; page: number; paragraph: number; start: number; end: number; text: string }
+  | { op: "insertText"; page: number; paragraph: number; at: number; text: string }
+  | { op: "deleteRange"; page: number; paragraph: number; start: number; end: number }
+  | { op: "moveImage"; page: number; image: number; dx: number; dy: number }
+  | { op: "scaleImage"; page: number; image: number; sx: number; sy: number }
+  | { op: "deleteImage"; page: number; image: number }
+  | { op: "setCell"; page: number; table: number; row: number; column: number; text: string }
+  | { op: "deletePage"; index: number }
+  | { op: "movePage"; from: number; to: number }
+  | { op: "setFieldValue"; name: string; value: string }
+  | { op: "flattenForms"; page: number }
+  | { op: "addAnnotation"; page: number; annotation: NewAnnotation }
+  | { op: "deleteAnnotation"; page: number; id: ObjectId };
+
 export interface SessionOptions {
   /**
    * Refuse any operation that cannot reach this rung. Spec 11.4.
@@ -498,6 +522,22 @@ export class Session {
   undo(): Promise<boolean>;
   redo(): Promise<boolean>;
   status(): Promise<SessionStatus>;
+  /**
+   * The operations staged so far, as replayable data. Spec 9.1.
+   *
+   * Plain objects keyed by `op`, not the undo stack's byte images:
+   * `JSON.stringify(await session.ops())` is a readable edit history to store
+   * in place of a second copy of the file, transmit, or diff. Reconstruct it
+   * with {@link Session#applyOps} over the same original bytes.
+   */
+  ops(): Promise<EditOp[]>;
+  /**
+   * Replay a captured op log onto this session. Spec 9.1.
+   *
+   * Exact against the document the ops were captured on. Stops at the first
+   * refused operation with its `PdfError`. Resolves to what is now staged.
+   */
+  applyOps(ops: readonly EditOp[]): Promise<SessionStatus>;
   /** Undo everything and close the session. */
   rollback(): Promise<void>;
   /** Apply everything staged and write the document out. */

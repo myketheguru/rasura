@@ -664,3 +664,222 @@ pub fn fidelity_floor(value: Option<&str>) -> Result<rasura::edit::Fidelity, JsV
         )),
     }
 }
+
+// ---------------------------------------------------------------------------
+// The serialisable op log. Spec 9.1, as data.
+//
+// Each op crosses as a plain object keyed by `op`, which is the method name —
+// the same shape a caller passes back to replay it, and plain enough that
+// `JSON.stringify` on the array is a valid, human-readable edit history.
+
+/// A `NewAnnotation` as the object `addAnnotation` and this op both accept, so
+/// a captured `addAnnotation` round-trips through [`to_new_annotation`].
+fn new_annotation_to_js(a: &rasura::annotations::NewAnnotation) -> JsValue {
+    let out = obj();
+    set_str(&out, "kind", a.kind.as_str());
+    set(&out, "rect", &rect(&a.rect));
+    set(&out, "colour", &rgb(a.colour));
+    if let Some(ic) = a.interior {
+        set(&out, "interior", &rgb(ic));
+    }
+    set_num(&out, "borderWidth", a.border_width);
+    if let Some(text) = &a.contents {
+        set_str(&out, "contents", text);
+    }
+    if !a.points.is_empty() {
+        let flat = Array::new();
+        for (x, y) in &a.points {
+            flat.push(&JsValue::from_f64(*x));
+            flat.push(&JsValue::from_f64(*y));
+        }
+        set(&out, "points", &flat);
+    }
+    out.into()
+}
+
+fn rgb(c: (f64, f64, f64)) -> JsValue {
+    let a = Array::new();
+    a.push(&JsValue::from_f64(c.0));
+    a.push(&JsValue::from_f64(c.1));
+    a.push(&JsValue::from_f64(c.2));
+    a.into()
+}
+
+/// One recorded op as a plain object.
+pub fn op(op: &rasura::EditOp) -> JsValue {
+    use rasura::EditOp as E;
+    let out = obj();
+    set_str(&out, "op", op.kind());
+    match op {
+        E::ReplaceText { page, paragraph, start, end, text } => {
+            set_num(&out, "page", *page as f64);
+            set_num(&out, "paragraph", *paragraph as f64);
+            set_num(&out, "start", *start as f64);
+            set_num(&out, "end", *end as f64);
+            set_str(&out, "text", text);
+        }
+        E::InsertText { page, paragraph, at, text } => {
+            set_num(&out, "page", *page as f64);
+            set_num(&out, "paragraph", *paragraph as f64);
+            set_num(&out, "at", *at as f64);
+            set_str(&out, "text", text);
+        }
+        E::DeleteRange { page, paragraph, start, end } => {
+            set_num(&out, "page", *page as f64);
+            set_num(&out, "paragraph", *paragraph as f64);
+            set_num(&out, "start", *start as f64);
+            set_num(&out, "end", *end as f64);
+        }
+        E::MoveImage { page, image, dx, dy } => {
+            set_num(&out, "page", *page as f64);
+            set_num(&out, "image", *image as f64);
+            set_num(&out, "dx", *dx);
+            set_num(&out, "dy", *dy);
+        }
+        E::ScaleImage { page, image, sx, sy } => {
+            set_num(&out, "page", *page as f64);
+            set_num(&out, "image", *image as f64);
+            set_num(&out, "sx", *sx);
+            set_num(&out, "sy", *sy);
+        }
+        E::DeleteImage { page, image } => {
+            set_num(&out, "page", *page as f64);
+            set_num(&out, "image", *image as f64);
+        }
+        E::SetCell { page, table, row, column, text } => {
+            set_num(&out, "page", *page as f64);
+            set_num(&out, "table", *table as f64);
+            set_num(&out, "row", *row as f64);
+            set_num(&out, "column", *column as f64);
+            set_str(&out, "text", text);
+        }
+        E::DeletePage { index } => set_num(&out, "index", *index as f64),
+        E::MovePage { from, to } => {
+            set_num(&out, "from", *from as f64);
+            set_num(&out, "to", *to as f64);
+        }
+        E::SetFieldValue { name, value } => {
+            set_str(&out, "name", name);
+            set_str(&out, "value", value);
+        }
+        E::FlattenForms { page } => set_num(&out, "page", *page as f64),
+        E::AddAnnotation { page, annotation } => {
+            set_num(&out, "page", *page as f64);
+            set(&out, "annotation", &new_annotation_to_js(annotation));
+        }
+        E::DeleteAnnotation { page, id } => {
+            set_num(&out, "page", *page as f64);
+            set(&out, "id", &obj_id(*id));
+        }
+    }
+    out.into()
+}
+
+/// A whole op log as an array of op objects.
+pub fn ops(list: &[rasura::EditOp]) -> JsValue {
+    let array = Array::new();
+    for o in list {
+        array.push(&op(o));
+    }
+    array.into()
+}
+
+fn req_usize(source: &JsValue, key: &str) -> Result<usize, JsValue> {
+    opt_num(source, key)
+        .ok_or_else(|| err(Code::Internal.as_str(), &format!("an op needs a numeric {key}")))
+        .map(|n| n as usize)
+}
+
+fn req_str(source: &JsValue, key: &str) -> Result<String, JsValue> {
+    opt_str(source, key)
+        .ok_or_else(|| err(Code::Internal.as_str(), &format!("an op needs a string {key}")))
+}
+
+/// Read one op object back into an [`EditOp`].
+///
+/// An unknown `op` is refused by name rather than skipped: a replay that
+/// silently dropped an operation it did not recognise would reconstruct a
+/// different document and report success, which is the one outcome this format
+/// exists to rule out.
+pub fn to_op(source: &JsValue) -> Result<rasura::EditOp, JsValue> {
+    use rasura::EditOp as E;
+    let kind = req_str(source, "op")?;
+    Ok(match kind.as_str() {
+        "replaceText" => E::ReplaceText {
+            page: req_usize(source, "page")?,
+            paragraph: req_usize(source, "paragraph")?,
+            start: req_usize(source, "start")?,
+            end: req_usize(source, "end")?,
+            text: req_str(source, "text")?,
+        },
+        "insertText" => E::InsertText {
+            page: req_usize(source, "page")?,
+            paragraph: req_usize(source, "paragraph")?,
+            at: req_usize(source, "at")?,
+            text: req_str(source, "text")?,
+        },
+        "deleteRange" => E::DeleteRange {
+            page: req_usize(source, "page")?,
+            paragraph: req_usize(source, "paragraph")?,
+            start: req_usize(source, "start")?,
+            end: req_usize(source, "end")?,
+        },
+        "moveImage" => E::MoveImage {
+            page: req_usize(source, "page")?,
+            image: req_usize(source, "image")?,
+            dx: num_or(source, "dx", 0.0),
+            dy: num_or(source, "dy", 0.0),
+        },
+        "scaleImage" => E::ScaleImage {
+            page: req_usize(source, "page")?,
+            image: req_usize(source, "image")?,
+            sx: num_or(source, "sx", 1.0),
+            sy: num_or(source, "sy", 1.0),
+        },
+        "deleteImage" => E::DeleteImage {
+            page: req_usize(source, "page")?,
+            image: req_usize(source, "image")?,
+        },
+        "setCell" => E::SetCell {
+            page: req_usize(source, "page")?,
+            table: req_usize(source, "table")?,
+            row: req_usize(source, "row")?,
+            column: req_usize(source, "column")?,
+            text: req_str(source, "text")?,
+        },
+        "deletePage" => E::DeletePage { index: req_usize(source, "index")? },
+        "movePage" => E::MovePage {
+            from: req_usize(source, "from")?,
+            to: req_usize(source, "to")?,
+        },
+        "setFieldValue" => E::SetFieldValue {
+            name: req_str(source, "name")?,
+            value: req_str(source, "value")?,
+        },
+        "flattenForms" => E::FlattenForms { page: req_usize(source, "page")? },
+        "addAnnotation" => E::AddAnnotation {
+            page: req_usize(source, "page")?,
+            annotation: to_new_annotation(&get(source, "annotation"))?,
+        },
+        "deleteAnnotation" => E::DeleteAnnotation {
+            page: req_usize(source, "page")?,
+            id: to_obj_id(&get(source, "id"))?,
+        },
+        other => {
+            return Err(err(Code::Internal.as_str(), &format!("unknown op {other:?}")));
+        }
+    })
+}
+
+/// Read a whole op log back. An array of op objects, as [`ops`] produced.
+pub fn to_ops(source: &JsValue) -> Result<Vec<rasura::EditOp>, JsValue> {
+    let array: Array = source
+        .clone()
+        .dyn_into()
+        .map_err(|_| err(Code::Internal.as_str(), "replay takes an array of ops"))?;
+    let mut out = Vec::with_capacity(array.length() as usize);
+    for item in array.iter() {
+        out.push(to_op(&item)?);
+    }
+    Ok(out)
+}

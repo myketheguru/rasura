@@ -217,6 +217,12 @@ export async function handle(request) {
       case "sessionStatus":
         return { result: m.sessionStatus(args[0]), transfer: [] };
 
+      case "sessionOps":
+        return { result: m.sessionOps(args[0]), transfer: [] };
+
+      case "replayOps":
+        return { result: m.replayOps(args[0], args[1]), transfer: [] };
+
       case "rollbackSession":
         return { result: m.rollbackSession(args[0]) ?? null, transfer: [] };
 

@@ -64,10 +64,12 @@ pub mod error;
 pub mod fonts;
 pub mod kind;
 pub mod metadata;
+pub mod ops;
 pub mod page;
 pub mod supply;
 
 pub use edit::{Outcome, Session, SessionState};
+pub use ops::{EditOp, OpLog};
 pub use error::{Code, Error, Result};
 pub use fonts::{Coverage, FontInfo};
 pub use kind::DocumentKind;

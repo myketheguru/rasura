@@ -41,6 +41,7 @@
 //! against it.
 
 use crate::error::{Code, Error, Result};
+use crate::ops::{EditOp, OpLog};
 use crate::page::{ImageId, Page, ParagraphId};
 use rasura_edit::session::{Compromise, Fidelity as RawFidelity};
 use std::ops::Range;
@@ -157,6 +158,16 @@ pub struct SessionState {
     inner: rasura_edit::SessionState,
     require: Fidelity,
     policy: rasura_edit::reflow::Policy,
+    /// The forward op log: what was done, as replayable data. Spec 9.1, as data.
+    ///
+    /// Parked here with the rest of the session's memory so it survives a
+    /// suspend/resume round trip through a handle table exactly as the undo log
+    /// does — a serialised edit that forgot half its operations on the way to
+    /// storage would be worse than none.
+    ops: Vec<EditOp>,
+    /// Operations undone but not yet superseded, newest last — the forward
+    /// log's mirror of the undo stack's redo half.
+    ops_redo: Vec<EditOp>,
 }
 
 impl Default for SessionState {
@@ -169,6 +180,8 @@ impl Default for SessionState {
             // who never thought about fidelity at all.
             require: Fidelity::Overlaid,
             policy: rasura_edit::reflow::Policy::default(),
+            ops: Vec::new(),
+            ops_redo: Vec::new(),
         }
     }
 }
@@ -201,6 +214,11 @@ impl SessionState {
         self.policy = rasura_edit::reflow::Policy { breaking, overflow };
         self
     }
+
+    /// The forward op log as it stands, without resuming the session. Spec 9.1.
+    pub fn ops(&self) -> &[EditOp] {
+        &self.ops
+    }
 }
 
 /// An edit in progress. Spec 9.1, 11.4.
@@ -212,6 +230,9 @@ pub struct Session<'a> {
     require: Fidelity,
     policy: rasura_edit::reflow::Policy,
     registry: Vec<crate::supply::Registered>,
+    /// The forward op log. See [`SessionState::ops`].
+    ops: Vec<EditOp>,
+    ops_redo: Vec<EditOp>,
 }
 
 impl<'a> Session<'a> {
@@ -233,12 +254,122 @@ impl<'a> Session<'a> {
             require: state.require,
             policy: state.policy,
             registry,
+            ops: state.ops,
+            ops_redo: state.ops_redo,
         }
     }
 
     /// Park the session and release the document.
     pub fn suspend(self) -> SessionState {
-        SessionState { inner: self.inner.suspend(), require: self.require, policy: self.policy }
+        SessionState {
+            inner: self.inner.suspend(),
+            require: self.require,
+            policy: self.policy,
+            ops: self.ops,
+            ops_redo: self.ops_redo,
+        }
+    }
+
+    /// Record a forward operation. Called at each public mutating method once
+    /// the operation has actually succeeded, so a refused edit logs nothing.
+    ///
+    /// A new operation clears the redo half, for the same reason the undo log
+    /// does: the history has branched, and the ops a redo would replay are no
+    /// longer reachable from here.
+    fn record(&mut self, op: EditOp) {
+        self.ops.push(op);
+        self.ops_redo.clear();
+    }
+
+    /// The forward op log: every operation this session has applied and not
+    /// undone, as replayable data. Spec 9.1.
+    pub fn ops(&self) -> &[EditOp] {
+        &self.ops
+    }
+
+    /// The op log stamped with the library version that produced it.
+    ///
+    /// This is the serialisable artefact: store it beside the original bytes
+    /// and [`apply`](Self::apply) reconstructs the edited document from the two.
+    pub fn op_log(&self) -> OpLog {
+        OpLog::new(self.ops.clone())
+    }
+
+    /// Re-issue one recorded operation against this session. Spec 9.1.
+    ///
+    /// Replay is defined as exact against the document the op was captured on:
+    /// the flat coordinates it carries are resolved against a freshly analysed
+    /// page, which is deterministic for identical bytes. A coordinate that does
+    /// not resolve — a paragraph index past the end, a page that is not there —
+    /// is refused with a code by the same guard the live method uses, never
+    /// applied to whatever else sits at that index.
+    ///
+    /// Applying an op records it again, so replaying a log reproduces that log.
+    pub fn apply(&mut self, op: &EditOp) -> Result<Outcome> {
+        match op {
+            EditOp::ReplaceText { page, paragraph, start, end, text } => {
+                let pg = self.page(*page)?;
+                let id = paragraph_at(&pg, *paragraph)?;
+                self.replace_text(&pg, id, *start..*end, text)
+            }
+            EditOp::InsertText { page, paragraph, at, text } => {
+                let pg = self.page(*page)?;
+                let id = paragraph_at(&pg, *paragraph)?;
+                self.insert_text(&pg, id, *at, text)
+            }
+            EditOp::DeleteRange { page, paragraph, start, end } => {
+                let pg = self.page(*page)?;
+                let id = paragraph_at(&pg, *paragraph)?;
+                self.delete_range(&pg, id, *start..*end)
+            }
+            EditOp::MoveImage { page, image, dx, dy } => {
+                let pg = self.page(*page)?;
+                let id = image_at(&pg, *image)?;
+                self.move_image(&pg, id, *dx, *dy)
+            }
+            EditOp::ScaleImage { page, image, sx, sy } => {
+                let pg = self.page(*page)?;
+                let id = image_at(&pg, *image)?;
+                self.scale_image(&pg, id, *sx, *sy)
+            }
+            EditOp::DeleteImage { page, image } => {
+                let pg = self.page(*page)?;
+                let id = image_at(&pg, *image)?;
+                self.delete_image(&pg, id)
+            }
+            EditOp::SetCell { page, table, row, column, text } => {
+                let pg = self.page(*page)?;
+                self.set_cell(&pg, *table, *row, *column, text)
+            }
+            EditOp::DeletePage { index } => self.delete_page(*index),
+            EditOp::MovePage { from, to } => self.move_page(*from, *to),
+            EditOp::SetFieldValue { name, value } => self.set_field_value(name, value),
+            EditOp::FlattenForms { page } => {
+                let pg = self.page(*page)?;
+                self.flatten_forms(&pg)
+            }
+            EditOp::AddAnnotation { page, annotation } => {
+                let pg = self.page(*page)?;
+                self.add_annotation(&pg, annotation)
+            }
+            EditOp::DeleteAnnotation { page, id } => {
+                let pg = self.page(*page)?;
+                self.delete_annotation(&pg, *id)
+            }
+        }
+    }
+
+    /// Replay a whole log onto this session. Spec 9.1.
+    ///
+    /// Stops at the first operation that is refused, with that operation's
+    /// error — a half-applied replay is the silent corruption this whole format
+    /// exists to avoid, so the caller learns which op failed rather than
+    /// inheriting a document that is neither the original nor the edited one.
+    pub fn apply_all(&mut self, ops: &[EditOp]) -> Result<()> {
+        for op in ops {
+            self.apply(op)?;
+        }
+        Ok(())
     }
 
     /// Refuse any operation that cannot reach this rung. Spec 11.4.
@@ -290,6 +421,33 @@ impl<'a> Session<'a> {
     /// the wrong one: the text a caller reads is Unicode, and an offset into
     /// its UTF-8 encoding is a number they have no way to compute.
     pub fn replace_text(
+        &mut self,
+        page: &Page,
+        id: ParagraphId,
+        range: Range<usize>,
+        replacement: &str,
+    ) -> Result<Outcome> {
+        let (start, end) = (range.start, range.end);
+        let outcome = self.replace_text_raw(page, id, range, replacement)?;
+        if let Some(paragraph) = paragraph_index(page, id) {
+            self.record(EditOp::ReplaceText {
+                page: page.index(),
+                paragraph,
+                start,
+                end,
+                text: replacement.to_string(),
+            });
+        }
+        Ok(outcome)
+    }
+
+    /// The text-replacement machinery, without recording an op.
+    ///
+    /// Separated so the recording wrapper above and the `insert`/`delete`
+    /// convenience methods can each log the operation the *caller* named —
+    /// `insertText`, not the `replaceText` it reduces to — rather than every
+    /// one of them appearing in the op log as a replacement.
+    fn replace_text_raw(
         &mut self,
         page: &Page,
         id: ParagraphId,
@@ -409,7 +567,16 @@ impl<'a> Session<'a> {
         at: usize,
         text: &str,
     ) -> Result<Outcome> {
-        self.replace_text(page, id, at..at, text)
+        let outcome = self.replace_text_raw(page, id, at..at, text)?;
+        if let Some(paragraph) = paragraph_index(page, id) {
+            self.record(EditOp::InsertText {
+                page: page.index(),
+                paragraph,
+                at,
+                text: text.to_string(),
+            });
+        }
+        Ok(outcome)
     }
 
     /// Delete a character range.
@@ -419,7 +586,12 @@ impl<'a> Session<'a> {
         id: ParagraphId,
         range: Range<usize>,
     ) -> Result<Outcome> {
-        self.replace_text(page, id, range, "")
+        let (start, end) = (range.start, range.end);
+        let outcome = self.replace_text_raw(page, id, range, "")?;
+        if let Some(paragraph) = paragraph_index(page, id) {
+            self.record(EditOp::DeleteRange { page: page.index(), paragraph, start, end });
+        }
+        Ok(outcome)
     }
 
     // -----------------------------------------------------------------------
@@ -438,7 +610,11 @@ impl<'a> Session<'a> {
         let image = self.image_of(page, id)?;
         let edit =
             rasura_edit::blocks::move_image(&page.editable, image, dx, dy).map_err(block_error)?;
-        self.stage(page, "move image", edit)
+        let outcome = self.stage(page, "move image", edit)?;
+        if let Some(image) = image_index(page, id) {
+            self.record(EditOp::MoveImage { page: page.index(), image, dx, dy });
+        }
+        Ok(outcome)
     }
 
     /// Scale an image about its own origin. Spec 9.2.
@@ -446,7 +622,11 @@ impl<'a> Session<'a> {
         let image = self.image_of(page, id)?;
         let edit =
             rasura_edit::blocks::scale_image(&page.editable, image, sx, sy).map_err(block_error)?;
-        self.stage(page, "scale image", edit)
+        let outcome = self.stage(page, "scale image", edit)?;
+        if let Some(image) = image_index(page, id) {
+            self.record(EditOp::ScaleImage { page: page.index(), image, sx, sy });
+        }
+        Ok(outcome)
     }
 
     /// Remove an image from the page. Spec 9.2.
@@ -456,9 +636,14 @@ impl<'a> Session<'a> {
     /// purge, and a caller who needs the second wants
     /// [`crate::SaveOptions::mode`] set to a full rewrite.
     pub fn delete_image(&mut self, page: &Page, id: ImageId) -> Result<Outcome> {
-        let image = self.image_of(page, id)?;
-        let edit = rasura_edit::blocks::delete_image(&page.editable, image).map_err(block_error)?;
-        self.stage(page, "delete image", edit)
+        let image_block = self.image_of(page, id)?;
+        let edit =
+            rasura_edit::blocks::delete_image(&page.editable, image_block).map_err(block_error)?;
+        let outcome = self.stage(page, "delete image", edit)?;
+        if let Some(image) = image_index(page, id) {
+            self.record(EditOp::DeleteImage { page: page.index(), image });
+        }
+        Ok(outcome)
     }
 
     /// Replace a cell's text in a detected table. Spec 9.2.
@@ -475,21 +660,29 @@ impl<'a> Session<'a> {
         column: usize,
         text: &str,
     ) -> Result<Outcome> {
-        let table = page
+        let table_ref = page
             .tables()
             .get(table)
             .ok_or_else(|| Error::new(Code::Malformed, format!("no table {table} on this page")))?;
         let edit = rasura_edit::tables::set_cell(
             self.inner.document(),
             &page.editable,
-            table,
+            table_ref,
             row,
             column,
             text,
             self.policy,
         )
         .map_err(|e| Error::from_layer(Code::Malformed, "the cell could not be set", e))?;
-        self.stage(page, "set cell", edit)
+        let outcome = self.stage(page, "set cell", edit)?;
+        self.record(EditOp::SetCell {
+            page: page.index(),
+            table,
+            row,
+            column,
+            text: text.to_string(),
+        });
+        Ok(outcome)
     }
 
     /// The image block behind a handle, refusing the ones this layer cannot
@@ -517,7 +710,9 @@ impl<'a> Session<'a> {
         let pages = rasura_content::page::pages(self.inner.document())?;
         let edit = rasura_edit::pages::delete_page(self.inner.document(), &pages, index)
             .map_err(page_error)?;
-        self.stage_objects("delete page", edit)
+        let outcome = self.stage_objects("delete page", edit)?;
+        self.record(EditOp::DeletePage { index });
+        Ok(outcome)
     }
 
     /// Move a page to a new position, with the same fix-up. Spec 9.2.
@@ -525,7 +720,9 @@ impl<'a> Session<'a> {
         let pages = rasura_content::page::pages(self.inner.document())?;
         let edit = rasura_edit::pages::move_page(self.inner.document(), &pages, from, to)
             .map_err(page_error)?;
-        self.stage_objects("move page", edit)
+        let outcome = self.stage_objects("move page", edit)?;
+        self.record(EditOp::MovePage { from, to });
+        Ok(outcome)
     }
 
     // -----------------------------------------------------------------------
@@ -563,7 +760,9 @@ impl<'a> Session<'a> {
         let edit =
             rasura_edit::annots::create(self.inner.document(), &raw, new, &page.editable.style)
                 .map_err(annot_error)?;
-        self.stage_annot("add annotation", edit)
+        let outcome = self.stage_annot("add annotation", edit)?;
+        self.record(EditOp::AddAnnotation { page: page.index(), annotation: new.clone() });
+        Ok(outcome)
     }
 
     /// Remove an annotation and unlink it from the page. Spec 10.7.
@@ -576,7 +775,9 @@ impl<'a> Session<'a> {
             .clone();
         let edit =
             rasura_edit::annots::delete(self.inner.document(), &raw, id).map_err(annot_error)?;
-        self.stage_annot("delete annotation", edit)
+        let outcome = self.stage_annot("delete annotation", edit)?;
+        self.record(EditOp::DeleteAnnotation { page: page.index(), id });
+        Ok(outcome)
     }
 
     /// Fill a form field, regenerating its appearance. Spec 10.4.
@@ -603,6 +804,7 @@ impl<'a> Session<'a> {
         let outcome = Outcome::from_raw(&edit.fidelity);
         self.enforce(&outcome)?;
         self.inner.set_objects("set field value", &edit.changes, edit.fidelity)?;
+        self.record(EditOp::SetFieldValue { name: name.to_string(), value: value.to_string() });
         Ok(outcome)
     }
 
@@ -642,6 +844,7 @@ impl<'a> Session<'a> {
         if !changes.is_empty() {
             self.inner.set_objects("flatten forms", &changes, edit.fidelity)?;
         }
+        self.record(EditOp::FlattenForms { page: page.index() });
         Ok(outcome)
     }
 
@@ -680,16 +883,36 @@ impl<'a> Session<'a> {
     ///
     /// Returns whether there was anything to undo.
     pub fn undo(&mut self) -> Result<bool> {
-        Ok(self.inner.undo()?)
+        let undone = self.inner.undo()?;
+        // The forward log mirrors the undo in step: one operation comes off and
+        // waits on the redo half. An operation that enlarged the font to supply
+        // a glyph is a separate entry on the *inner* log but not on this one, so
+        // an undo that unwinds only that internal step finds nothing here to
+        // move — which is correct, since the caller issued no such op.
+        if undone {
+            if let Some(op) = self.ops.pop() {
+                self.ops_redo.push(op);
+            }
+        }
+        Ok(undone)
     }
 
     pub fn redo(&mut self) -> Result<bool> {
-        Ok(self.inner.redo()?)
+        let redone = self.inner.redo()?;
+        if redone {
+            if let Some(op) = self.ops_redo.pop() {
+                self.ops.push(op);
+            }
+        }
+        Ok(redone)
     }
 
     /// Abandon every staged operation. The document is left as it was found.
     pub fn rollback(&mut self) -> Result<()> {
-        Ok(self.inner.rollback()?)
+        self.inner.rollback()?;
+        self.ops.clear();
+        self.ops_redo.clear();
+        Ok(())
     }
 
     /// How many operations are staged.
@@ -739,6 +962,34 @@ impl<'a> Session<'a> {
             ),
         ))
     }
+}
+
+/// Resolve a flat paragraph index on a page to its id, refusing an index that
+/// is not there rather than addressing whatever sits beyond the end. The guard
+/// a replayed op passes through, identical to the one the live wasm surface uses.
+fn paragraph_at(page: &Page, index: usize) -> Result<ParagraphId> {
+    page.paragraphs()
+        .get(index)
+        .map(|p| p.id)
+        .ok_or_else(|| Error::new(Code::Malformed, format!("no paragraph {index} on this page")))
+}
+
+fn image_at(page: &Page, index: usize) -> Result<ImageId> {
+    page.images()
+        .get(index)
+        .map(|i| i.id)
+        .ok_or_else(|| Error::new(Code::Malformed, format!("no image {index} on this page")))
+}
+
+/// The flat index of a paragraph id within a page, so an op is recorded in the
+/// same coordinate a caller addressed it by. `None` only if the id is not from
+/// this page, which a caller cannot arrange through the public API.
+fn paragraph_index(page: &Page, id: ParagraphId) -> Option<usize> {
+    page.paragraphs().iter().position(|p| p.id == id)
+}
+
+fn image_index(page: &Page, id: ImageId) -> Option<usize> {
+    page.images().iter().position(|i| i.id == id)
 }
 
 #[cfg(test)]
@@ -1108,6 +1359,116 @@ mod tests {
         assert!(Fidelity::Exact > Fidelity::Reembedded);
         assert!(Fidelity::Reembedded > Fidelity::Substituted);
         assert!(Fidelity::Substituted > Fidelity::Overlaid);
+    }
+
+    #[test]
+    fn the_op_log_records_the_operation_a_caller_named() {
+        // `insertText` reduces to `replaceText` internally, but the forward log
+        // records what the *caller* asked for — anything else would make the
+        // serialised history a worse description of events than the code that
+        // produced it.
+        let mut doc = Document::open(page_doc()).expect("open");
+        let page = doc.page(0).expect("page");
+        let id = page.paragraphs()[0].id;
+
+        let mut session = doc.edit();
+        session.insert_text(&page, id, 0, "X").expect("insert");
+
+        match session.ops() {
+            [EditOp::InsertText { page, paragraph, at, text }] => {
+                assert_eq!((*page, *paragraph, *at), (0, 0, 0));
+                assert_eq!(text, "X");
+            }
+            other => panic!("expected one InsertText op, got {other:?}"),
+        }
+        assert_eq!(session.op_log().version, env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn a_refused_operation_is_not_in_the_op_log() {
+        // The log must describe the document that exists. An operation refused
+        // for being below the fidelity floor changed nothing, so an entry a
+        // replay would re-attempt — and re-refuse — does not belong on it.
+        let mut doc = Document::open(page_doc()).expect("open");
+        let page = doc.page(0).expect("page");
+        let id = page.paragraphs()[0].id;
+
+        let mut session = doc.edit();
+        session.require(Fidelity::Exact);
+        session.replace_text(&page, id, 0..5, "\u{4e00}").expect_err("no glyph for this");
+        assert!(session.ops().is_empty(), "a refused op logs nothing");
+    }
+
+    #[test]
+    fn undo_and_redo_move_operations_on_and_off_the_log() {
+        let mut doc = Document::open(page_doc()).expect("open");
+        let page = doc.page(0).expect("page");
+        let id = page.paragraphs()[0].id;
+
+        let mut session = doc.edit();
+        session.replace_text(&page, id, 0..5, "Howdy").expect("replace");
+        assert_eq!(session.ops().len(), 1);
+
+        session.undo().expect("undo");
+        assert!(session.ops().is_empty(), "undo took the op off the forward log");
+
+        session.redo().expect("redo");
+        assert_eq!(session.ops().len(), 1, "redo put it back");
+    }
+
+    #[test]
+    fn a_captured_log_replays_to_byte_identical_output() {
+        // The property the whole format exists for: the original bytes plus the
+        // op log reconstruct the edited document exactly, so an editor can store
+        // the edit as data instead of as a second copy of the file.
+        let bytes = richer();
+
+        let (log, committed) = {
+            let mut doc = Document::open(bytes.clone()).expect("open");
+            let mut session = doc.edit();
+            // Re-analyse the page before each op, as a real caller (and the wasm
+            // surface) does: a paragraph's spans address the stream as the last
+            // op left it.
+            {
+                let page = session.page(0).expect("page");
+                let para = page.paragraphs()[0].id;
+                session.replace_text(&page, para, 0..5, "HELLO").expect("replace");
+            }
+            {
+                let page = session.page(0).expect("page");
+                let image = page.images()[0].id;
+                session.move_image(&page, image, 10.0, -10.0).expect("move");
+            }
+            let log = session.ops().to_vec();
+            let committed = session.commit(&SaveOptions::default()).expect("commit").bytes;
+            (log, committed)
+        };
+        assert_eq!(log.len(), 2);
+
+        let mut doc = Document::open(bytes).expect("reopen");
+        let replayed = {
+            let mut session = doc.edit();
+            session.apply_all(&log).expect("replay");
+            assert_eq!(session.ops().len(), 2, "replaying a log reproduces that log");
+            session.commit(&SaveOptions::default()).expect("commit").bytes
+        };
+
+        assert_eq!(replayed, committed, "the ops reconstruct the edited bytes");
+    }
+
+    #[test]
+    fn replay_refuses_a_coordinate_that_does_not_resolve() {
+        // Replay is exact against the document the ops were captured on. A
+        // coordinate that lands nowhere is refused with a code, never applied to
+        // whatever else sits at that index — the silent corruption the version
+        // stamp and this guard exist together to prevent.
+        let mut doc = Document::open(page_doc()).expect("open");
+        let mut session = doc.edit();
+        let err = session
+            .apply(&EditOp::ReplaceText { page: 0, paragraph: 99, start: 0, end: 1, text: "x".into() })
+            .expect_err("no such paragraph");
+        assert_eq!(err.code(), Code::Malformed);
+        assert!(session.ops().is_empty(), "a refused replay logged nothing");
     }
 
     #[test]
