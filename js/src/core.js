@@ -20,14 +20,28 @@ let wasm = null;
  * browser, in a Worker, and in node, where the glue's own `fetch` cannot read a
  * `file://` URL.
  *
- * @param {{ wasmUrl?: string | URL }} [opts]
+ * `wasmModule` is the override one rung lower, for a runtime that can neither
+ * `fetch` a bundled asset nor read the filesystem. Cloudflare Workers (workerd)
+ * is the case that forces it: there is no `fetch` for a `file:`-like asset URL
+ * and no `fs`, but an imported `.wasm` arrives already compiled to a
+ * `WebAssembly.Module`. Handed a module (or raw bytes) here, nothing is fetched
+ * at all — the glue instantiates it synchronously. Pair with `{ worker: false }`,
+ * because workerd has neither the DOM `Worker` nor node's `worker_threads`.
+ *
+ * `wasmModule` wins over `wasmUrl` when both are given: it is the more specific
+ * answer to "where are the bytes", and the one that avoids a network round
+ * trip the caller has already paid for.
+ *
+ * @param {{ wasmUrl?: string | URL, wasmModule?: WebAssembly.Module | ArrayBuffer | Uint8Array }} [opts]
  */
 export async function init(opts = {}) {
   if (wasm) return wasm;
 
   const glue = await import("../wasm/rasura_wasm.js");
-  const url = opts.wasmUrl ?? new URL("../wasm/rasura_wasm_bg.wasm", import.meta.url);
-  await glue.default({ module_or_path: await readWasm(url) });
+  const source =
+    opts.wasmModule ??
+    (await readWasm(opts.wasmUrl ?? new URL("../wasm/rasura_wasm_bg.wasm", import.meta.url)));
+  await glue.default({ module_or_path: source });
   wasm = glue;
   return wasm;
 }

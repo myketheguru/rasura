@@ -244,6 +244,46 @@ For a caller who manages their own Worker, or who is debugging and wants a
 stack that does not stop at a message boundary. Same code, same answers — the
 two transports share one implementation so they cannot drift.
 
+## On a server: Cloudflare Workers and other edge runtimes
+
+The Rust core is runtime-agnostic and the WASM is a plain `wasm32` module, so it
+runs server-side as readily as in a tab — ingest-on-upload, headless export, a
+fill-and-flatten endpoint. Two things differ from the browser, and one option
+settles both.
+
+A Worker runtime (workerd) has neither the DOM `Worker` nor node's
+`worker_threads`, so run on the calling isolate with `{ worker: false }`. And it
+cannot `fetch` a bundled asset by URL or read a filesystem — but an imported
+`.wasm` arrives already compiled to a `WebAssembly.Module`. Hand that module in
+with `wasmModule` and nothing is fetched:
+
+```js
+import { Pdf } from "rasura";
+import wasmModule from "rasura/wasm/rasura_wasm_bg.wasm"; // workerd: a Module
+
+export default {
+  async fetch(request) {
+    const doc = await Pdf.open(await request.arrayBuffer(), {
+      worker: false,
+      wasmModule,
+    });
+    try {
+      const session = doc.edit();
+      await session.setFieldValue("applicant.name", "A. Ozdamar");
+      const { bytes } = await session.commit();
+      return new Response(bytes, { headers: { "content-type": "application/pdf" } });
+    } finally {
+      await doc.close();
+    }
+  },
+};
+```
+
+`wasmModule` also accepts raw `.wasm` bytes, for a Node or Deno server that has
+them in hand rather than as a compiled module; it is instantiated either way and
+wins over `wasmUrl` when both are set. `close()` matters more here than in a
+tab — an isolate serves many requests, and a leaked document outlives each one.
+
 ## TypeScript
 
 Declarations are hand-written and compiled under `strict`. There is no `any` in

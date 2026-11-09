@@ -114,6 +114,24 @@ export interface OpenOptions {
    * CDN-hosted consumers. Defaults to the asset beside the package.
    */
   wasmUrl?: string | URL;
+  /**
+   * The module itself, instead of a location to fetch it from. A compiled
+   * `WebAssembly.Module` or the raw `.wasm` bytes.
+   *
+   * For a runtime that can neither `fetch` a bundled asset nor read the
+   * filesystem — Cloudflare Workers (workerd) above all, where an imported
+   * `.wasm` arrives already compiled to a `WebAssembly.Module`. Nothing is
+   * fetched when this is set; it is instantiated directly. Wins over `wasmUrl`.
+   *
+   * Pair with `{ worker: false }`: workerd has neither the DOM `Worker` nor
+   * node's `worker_threads`, so the Worker transport cannot start there.
+   *
+   * ```js
+   * import wasmModule from '../wasm/rasura_wasm_bg.wasm' // workerd: a Module
+   * const doc = await Pdf.open(bytes, { worker: false, wasmModule })
+   * ```
+   */
+  wasmModule?: WebAssembly.Module | ArrayBuffer | Uint8Array;
 }
 
 export interface Rect {

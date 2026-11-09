@@ -16,7 +16,7 @@ export { PdfError, CODES } from "./errors.js";
  * the same code on the calling thread.
  */
 class Inline {
-  /** @param {{ wasmUrl?: string | URL }} opts */
+  /** @param {{ wasmUrl?: string | URL, wasmModule?: WebAssembly.Module | ArrayBuffer | Uint8Array }} opts */
   constructor(opts) {
     this.opts = opts;
   }
