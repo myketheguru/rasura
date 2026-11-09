@@ -625,6 +625,54 @@ export class Session {
   }
 
   /**
+   * Draw new text onto a page. Spec 9.2.
+   *
+   * For adding a value where one never was — a caption answer, a stamp, a
+   * caption — rather than editing text already there. The face is Helvetica, so
+   * it reads as added, not as part of the original typesetting.
+   *
+   * The anchor is either an absolute baseline origin, `{ x, y }`, or
+   * `{ label, gap }` to sit just past the right edge of a paragraph whose text
+   * contains `label` — the flat-form case, where the space to fill is beside a
+   * printed caption. A `background` of `[r, g, b]` (components 0–1) fills a
+   * rectangle behind the text first, for covering what was there.
+   *
+   * @param {string} text
+   * @param {{ x: number, y: number } | { label: string, gap?: number }} anchor
+   * @param {{ page?: number, size?: number, background?: [number, number, number] }} [opts]
+   */
+  async placeText(text, anchor, opts = {}) {
+    return await this._op("placeText", [
+      opts.page ?? 0,
+      anchor,
+      text,
+      opts.size ?? 12,
+      opts.background,
+    ]);
+  }
+
+  /**
+   * Create a fillable text field over a rectangle. Spec 10.4.
+   *
+   * The missing half of "prepare a flat PDF to be signed": where a form has no
+   * field for a value, this makes a named one, which {@link Session#setFieldValue}
+   * then fills like any other. `rect` is `[x0, y0, x1, y1]` in page space.
+   *
+   * @param {string} name
+   * @param {[number, number, number, number]} rect
+   * @param {{ page?: number, value?: string, size?: number }} [opts]
+   */
+  async createField(name, rect, opts = {}) {
+    return await this._op("createField", [
+      opts.page ?? 0,
+      rect,
+      name,
+      opts.value ?? "",
+      opts.size ?? 12,
+    ]);
+  }
+
+  /**
    * Every staged operation goes through here.
    *
    * The `await this._configured` is the reason it exists: `edit({

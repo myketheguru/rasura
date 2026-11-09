@@ -65,6 +65,28 @@ fn annot_error(e: rasura_edit::AnnotError) -> Error {
     Error::from_layer(Code::Malformed, "the annotation could not be written", e)
 }
 
+fn place_error(e: rasura_edit::place::PlaceError) -> Error {
+    use rasura_edit::place::PlaceError as P;
+    let code = match e {
+        // Nothing in the text could be drawn by a standard face: the same code
+        // `replace_text` uses when no font can write the characters asked for.
+        P::Unencodable(_) => Code::FontUnavailable,
+        _ => Code::Malformed,
+    };
+    Error::from_layer(code, "the content could not be placed", e)
+}
+
+/// Where placed text goes. Spec 9.2.
+#[derive(Debug, Clone)]
+pub enum PlaceAnchor {
+    /// An absolute page-space origin: the left end of the text baseline.
+    At { x: f64, y: f64 },
+    /// Just after a paragraph whose text contains `label`, by `gap` units — the
+    /// common case on a flat form, where the field to fill is the space to the
+    /// right of a printed caption.
+    NearLabel { label: String, gap: f64 },
+}
+
 /// How faithful an operation managed to be. Spec 11.4.
 ///
 /// Ordered worst to best so a required floor is a comparison rather than a
@@ -355,6 +377,15 @@ impl<'a> Session<'a> {
             EditOp::DeleteAnnotation { page, id } => {
                 let pg = self.page(*page)?;
                 self.delete_annotation(&pg, *id)
+            }
+            EditOp::PlaceText { page, x, y, size, text, background } => {
+                let pg = self.page(*page)?;
+                self.place_text(&pg, &PlaceAnchor::At { x: *x, y: *y }, text, *size, *background)
+            }
+            EditOp::CreateField { page, rect, name, value, size } => {
+                let pg = self.page(*page)?;
+                let rect = crate::Rect { x0: rect.0, y0: rect.1, x1: rect.2, y1: rect.3 };
+                self.create_field(&pg, rect, name, value, *size)
             }
         }
     }
@@ -846,6 +877,111 @@ impl<'a> Session<'a> {
         }
         self.record(EditOp::FlattenForms { page: page.index() });
         Ok(outcome)
+    }
+
+    /// Draw new text onto a page in a standard face. Spec 9.2.
+    ///
+    /// For *adding* a value to a page that has no field for it — a flat form, a
+    /// stamp, a caption. The text is Helvetica, not the document's own typeface,
+    /// which is the right choice for text being added rather than a compromise:
+    /// a value typed onto a form reads as typed in.
+    ///
+    /// `background`, when given, fills a rectangle behind the text in that RGB
+    /// colour, for covering what was there before.
+    pub fn place_text(
+        &mut self,
+        page: &Page,
+        anchor: &PlaceAnchor,
+        text: &str,
+        size: f64,
+        background: Option<(f64, f64, f64)>,
+    ) -> Result<Outcome> {
+        let (x, y) = match anchor {
+            PlaceAnchor::At { x, y } => (*x, *y),
+            PlaceAnchor::NearLabel { label, gap } => {
+                let para = page
+                    .paragraphs()
+                    .iter()
+                    .find(|p| p.text.contains(label.as_str()))
+                    .ok_or_else(|| {
+                        place_error(rasura_edit::place::PlaceError::LabelNotFound(label.clone()))
+                    })?;
+                // Just past the caption's right edge, on its baseline.
+                (para.box_.x1 + gap, para.box_.y0)
+            }
+        };
+
+        let raw = self.raw_page(page.index())?;
+        let edit = rasura_edit::place::place_text(
+            self.inner.document(),
+            &raw,
+            x,
+            y,
+            size,
+            text,
+            background,
+            &page.editable.style,
+        )
+        .map_err(place_error)?;
+
+        let outcome = Outcome::from_raw(&edit.fidelity);
+        self.enforce(&outcome)?;
+        self.inner.set_objects("place text", &edit.changes, edit.fidelity)?;
+        // Recorded with the resolved origin, which is exact against this
+        // document — a `near_label` anchor is a convenience for finding it, not
+        // a coordinate worth replaying a second label search for.
+        self.record(EditOp::PlaceText {
+            page: page.index(),
+            x,
+            y,
+            size,
+            text: text.to_string(),
+            background,
+        });
+        Ok(outcome)
+    }
+
+    /// Create a text field over a rectangle. Spec 10.4.
+    ///
+    /// The missing primitive for a "prepare this flat PDF to be signed" flow:
+    /// where a form has no field, this makes one — a merged widget that is both
+    /// the AcroForm field and the page annotation, named so
+    /// [`set_field_value`](Self::set_field_value) can fill it afterwards.
+    pub fn create_field(
+        &mut self,
+        page: &Page,
+        rect: crate::Rect,
+        name: &str,
+        value: &str,
+        size: f64,
+    ) -> Result<Outcome> {
+        let raw = self.raw_page(page.index())?;
+        let edit =
+            rasura_edit::place::create_text_field(self.inner.document(), &raw, rect, name, value, size)
+                .map_err(place_error)?;
+
+        let outcome = Outcome::from_raw(&edit.fidelity);
+        self.enforce(&outcome)?;
+        self.inner.set_objects("create field", &edit.changes, edit.fidelity)?;
+        self.record(EditOp::CreateField {
+            page: page.index(),
+            rect: (rect.x0, rect.y0, rect.x1, rect.y1),
+            name: name.to_string(),
+            value: value.to_string(),
+            size,
+        });
+        Ok(outcome)
+    }
+
+    /// The raw page dictionary behind an analysed page, for the object-level
+    /// operations that build new content against it.
+    fn raw_page(&self, index: usize) -> Result<rasura_content::page::Page> {
+        let pages = rasura_content::page::pages(self.inner.document())?;
+        Ok(pages
+            .pages
+            .get(index)
+            .ok_or_else(|| Error::new(Code::Malformed, format!("no page {index}")))?
+            .clone())
     }
 
     /// Stage an operation that writes whole objects.
@@ -1469,6 +1605,114 @@ mod tests {
             .expect_err("no such paragraph");
         assert_eq!(err.code(), Code::Malformed);
         assert!(session.ops().is_empty(), "a refused replay logged nothing");
+    }
+
+    #[test]
+    fn a_new_field_is_created_and_can_be_filled() {
+        // The "prepare a flat PDF to be signed" path: a page with no field for a
+        // value gets one, named, and the value goes in afterwards.
+        let mut doc = Document::open(richer()).expect("open");
+        let before = doc.form_fields().len();
+
+        let page = doc.page(1).expect("page"); // the second page carries no field
+        let mut session = doc.edit();
+        session
+            .create_field(
+                &page,
+                crate::Rect { x0: 72.0, y0: 500.0, x1: 300.0, y1: 520.0 },
+                "signature",
+                "",
+                10.0,
+            )
+            .expect("create field");
+        let saved = session.commit(&SaveOptions::default()).expect("commit");
+
+        let mut after = Document::open(saved.bytes).expect("reopen");
+        let names: Vec<String> = after.form_fields().iter().map(|f| f.name.clone()).collect();
+        assert!(names.contains(&"signature".to_string()), "{names:?}");
+        assert_eq!(after.form_fields().len(), before + 1);
+
+        // And the created field fills like any other.
+        let page = after.page(1).expect("page");
+        let mut session = after.edit();
+        drop(page);
+        session.set_field_value("signature", "A. Ozdamar").expect("fill");
+    }
+
+    #[test]
+    fn placed_text_appears_on_the_page() {
+        let mut doc = Document::open(richer()).expect("open");
+        let page = doc.page(0).expect("page");
+        let mut session = doc.edit();
+        session
+            .place_text(&page, &PlaceAnchor::At { x: 72.0, y: 500.0 }, "Placed here", 12.0, None)
+            .expect("place");
+        let saved = session.commit(&SaveOptions::default()).expect("commit");
+
+        let after = Document::open(saved.bytes).expect("reopen");
+        let page = after.page(0).expect("page");
+        assert!(
+            page.paragraphs().iter().any(|p| p.text.contains("Placed")),
+            "placed text not found in {:?}",
+            page.paragraphs().iter().map(|p| &p.text).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn text_is_placed_after_a_label() {
+        let mut doc = Document::open(richer()).expect("open");
+        let page = doc.page(0).expect("page"); // its paragraph reads "Hello world"
+        let mut session = doc.edit();
+        session
+            .place_text(
+                &page,
+                &PlaceAnchor::NearLabel { label: "Hello".into(), gap: 6.0 },
+                "Jane Doe",
+                12.0,
+                None,
+            )
+            .expect("place near label");
+        let saved = session.commit(&SaveOptions::default()).expect("commit");
+
+        let after = Document::open(saved.bytes).expect("reopen");
+        assert!(
+            after.page(0).expect("page").paragraphs().iter().any(|p| p.text.contains("Jane")),
+            "label-anchored text not found"
+        );
+    }
+
+    #[test]
+    fn a_missing_label_is_a_coded_refusal() {
+        let mut doc = Document::open(richer()).expect("open");
+        let page = doc.page(0).expect("page");
+        let mut session = doc.edit();
+        let err = session
+            .place_text(
+                &page,
+                &PlaceAnchor::NearLabel { label: "nowhere on this page".into(), gap: 6.0 },
+                "x",
+                12.0,
+                None,
+            )
+            .expect_err("no such label");
+        assert_eq!(err.code(), Code::Malformed);
+        assert!(session.is_empty(), "a refused placement staged nothing");
+    }
+
+    #[test]
+    fn placing_text_undoes_to_byte_identical() {
+        // Invariant I5 for the object-level add path, as for every other edit.
+        let original = richer();
+        let mut doc = Document::open(original.clone()).expect("open");
+        let page = doc.page(0).expect("page");
+        let mut session = doc.edit();
+        session
+            .place_text(&page, &PlaceAnchor::At { x: 72.0, y: 500.0 }, "X", 12.0, Some((1.0, 1.0, 1.0)))
+            .expect("place");
+        assert_eq!(session.ops().len(), 1);
+        assert!(session.undo().expect("undo"));
+        let saved = session.commit(&SaveOptions::default()).expect("commit");
+        assert_eq!(saved.bytes, original, "undo restored the exact prior bytes");
     }
 
     #[test]

@@ -60,6 +60,21 @@ pub enum EditOp {
     FlattenForms { page: usize },
     AddAnnotation { page: usize, annotation: NewAnnotation },
     DeleteAnnotation { page: usize, id: ObjId },
+    PlaceText {
+        page: usize,
+        x: f64,
+        y: f64,
+        size: f64,
+        text: String,
+        background: Option<(f64, f64, f64)>,
+    },
+    CreateField {
+        page: usize,
+        rect: (f64, f64, f64, f64),
+        name: String,
+        value: String,
+        size: f64,
+    },
 }
 
 impl EditOp {
@@ -82,6 +97,8 @@ impl EditOp {
             EditOp::FlattenForms { .. } => "flattenForms",
             EditOp::AddAnnotation { .. } => "addAnnotation",
             EditOp::DeleteAnnotation { .. } => "deleteAnnotation",
+            EditOp::PlaceText { .. } => "placeText",
+            EditOp::CreateField { .. } => "createField",
         }
     }
 }

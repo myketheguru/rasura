@@ -117,6 +117,13 @@ const fields = await doc.formFields();
 await session.setFieldValue(fields[0].name, "A. Ozdamar");
 await session.flattenForms();      // one-way: the form stops being a form
 
+// Adding, not editing: draw a value onto the page, or make a field where the
+// form has none — the "prepare a flat PDF, then fill it" pair.
+await session.placeText("A. Ozdamar", { label: "Signed:", gap: 6 });     // beside a printed caption
+await session.placeText("DRAFT", { x: 240, y: 700 }, { size: 36 });      // or at an absolute point
+await session.createField("countersign", [72, 500, 300, 520], { page: 1 });
+await session.setFieldValue("countersign", "A. Ozdamar");                // fills like any other
+
 // Table cells, on a table the layout layer detected.
 await session.setCell(page.tables()[0].id, { row: 1, column: 2 }, "48.2");
 

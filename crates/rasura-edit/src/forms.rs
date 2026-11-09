@@ -486,13 +486,13 @@ fn grey_or_rgb(array: &[Object]) -> Option<(f64, f64, f64)> {
     }
 }
 
-fn acroform(doc: &Document) -> Option<Dictionary> {
+pub(crate) fn acroform(doc: &Document) -> Option<Dictionary> {
     let catalog = doc.catalog().ok()?;
     let catalog = catalog.as_dict()?;
     doc.get_entry(catalog, "AcroForm").ok()??.as_dict().cloned()
 }
 
-fn acroform_id(doc: &Document) -> Option<ObjId> {
+pub(crate) fn acroform_id(doc: &Document) -> Option<ObjId> {
     let catalog = doc.catalog().ok()?;
     catalog.as_dict()?.get("AcroForm")?.as_reference()
 }

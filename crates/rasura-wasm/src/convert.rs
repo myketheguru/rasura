@@ -771,8 +771,87 @@ pub fn op(op: &rasura::EditOp) -> JsValue {
             set_num(&out, "page", *page as f64);
             set(&out, "id", &obj_id(*id));
         }
+        E::PlaceText { page, x, y, size, text, background } => {
+            set_num(&out, "page", *page as f64);
+            set_num(&out, "x", *x);
+            set_num(&out, "y", *y);
+            set_num(&out, "size", *size);
+            set_str(&out, "text", text);
+            if let Some(c) = background {
+                set(&out, "background", &rgb(*c));
+            }
+        }
+        E::CreateField { page, rect, name, value, size } => {
+            set_num(&out, "page", *page as f64);
+            set(&out, "rect", &rect4(*rect));
+            set_str(&out, "name", name);
+            set_str(&out, "value", value);
+            set_num(&out, "size", *size);
+        }
     }
     out.into()
+}
+
+/// A rectangle as the four-number array the op format carries it as.
+fn rect4(r: (f64, f64, f64, f64)) -> JsValue {
+    let a = Array::new();
+    a.push(&JsValue::from_f64(r.0));
+    a.push(&JsValue::from_f64(r.1));
+    a.push(&JsValue::from_f64(r.2));
+    a.push(&JsValue::from_f64(r.3));
+    a.into()
+}
+
+/// An optional RGB triple from a value that may be absent.
+///
+/// Absent is `None` — the common case, text with no masking fill. Present but
+/// malformed is refused rather than coerced: a background that is not three
+/// numbers is a corrupt argument, not a transparent one.
+pub fn opt_rgb_value(value: &JsValue) -> Result<Option<(f64, f64, f64)>, JsValue> {
+    if value.is_undefined() || value.is_null() {
+        return Ok(None);
+    }
+    let a: Array = value
+        .clone()
+        .dyn_into()
+        .map_err(|_| err(Code::Internal.as_str(), "a background must be an [r,g,b] array"))?;
+    if a.length() != 3 {
+        return Err(err(Code::Internal.as_str(), "a background must have three components"));
+    }
+    match (a.get(0).as_f64(), a.get(1).as_f64(), a.get(2).as_f64()) {
+        (Some(r), Some(g), Some(b)) => Ok(Some((r, g, b))),
+        _ => Err(err(Code::Internal.as_str(), "a background's components must be numbers")),
+    }
+}
+
+/// A four-number rectangle from a value, as `[x0, y0, x1, y1]`.
+fn rect4_value(value: &JsValue) -> Result<(f64, f64, f64, f64), JsValue> {
+    let a: Array = value
+        .clone()
+        .dyn_into()
+        .map_err(|_| err(Code::Internal.as_str(), "a rect must be an [x0,y0,x1,y1] array"))?;
+    if a.length() != 4 {
+        return Err(err(Code::Internal.as_str(), "a rect must have four components"));
+    }
+    let n = |i: u32| {
+        a.get(i)
+            .as_f64()
+            .ok_or_else(|| err(Code::Internal.as_str(), "a rect's components must be numbers"))
+    };
+    Ok((n(0)?, n(1)?, n(2)?, n(3)?))
+}
+
+/// A four-number rectangle read back from an op object's `rect`.
+fn req_rect4(source: &JsValue, key: &str) -> Result<(f64, f64, f64, f64), JsValue> {
+    rect4_value(&get(source, key))
+}
+
+/// A page-space rectangle argument as `[x0, y0, x1, y1]`, the facade's
+/// [`rasura::Rect`]. Distinct from [`to_rect`], which reads the `{ x0, y0, x1,
+/// y1 }` object shape the annotation API uses.
+pub fn to_rect4(value: &JsValue) -> Result<rasura::Rect, JsValue> {
+    let (x0, y0, x1, y1) = rect4_value(value)?;
+    Ok(rasura::Rect { x0, y0, x1, y1 })
 }
 
 /// A whole op log as an array of op objects.
@@ -793,6 +872,21 @@ fn req_usize(source: &JsValue, key: &str) -> Result<usize, JsValue> {
 fn req_str(source: &JsValue, key: &str) -> Result<String, JsValue> {
     opt_str(source, key)
         .ok_or_else(|| err(Code::Internal.as_str(), &format!("an op needs a string {key}")))
+}
+
+/// Read a placement anchor object into a [`PlaceAnchor`].
+///
+/// Two shapes, told apart by `label`: `{ label, gap? }` anchors just past a
+/// caption, `{ x, y }` is an absolute baseline origin. `label` wins when both
+/// are present, since a caller who named a caption meant to find it rather than
+/// to pin a coordinate.
+pub fn to_anchor(source: &JsValue) -> Result<rasura::PlaceAnchor, JsValue> {
+    use rasura::PlaceAnchor as A;
+    if let Some(label) = opt_str(source, "label") {
+        Ok(A::NearLabel { label, gap: num_or(source, "gap", 0.0) })
+    } else {
+        Ok(A::At { x: num_or(source, "x", 0.0), y: num_or(source, "y", 0.0) })
+    }
 }
 
 /// Read one op object back into an [`EditOp`].
@@ -864,6 +958,21 @@ pub fn to_op(source: &JsValue) -> Result<rasura::EditOp, JsValue> {
         "deleteAnnotation" => E::DeleteAnnotation {
             page: req_usize(source, "page")?,
             id: to_obj_id(&get(source, "id"))?,
+        },
+        "placeText" => E::PlaceText {
+            page: req_usize(source, "page")?,
+            x: num_or(source, "x", 0.0),
+            y: num_or(source, "y", 0.0),
+            size: num_or(source, "size", 12.0),
+            text: req_str(source, "text")?,
+            background: opt_rgb(source, "background")?,
+        },
+        "createField" => E::CreateField {
+            page: req_usize(source, "page")?,
+            rect: req_rect4(source, "rect")?,
+            name: req_str(source, "name")?,
+            value: req_str(source, "value")?,
+            size: num_or(source, "size", 12.0),
         },
         other => {
             return Err(err(Code::Internal.as_str(), &format!("unknown op {other:?}")));

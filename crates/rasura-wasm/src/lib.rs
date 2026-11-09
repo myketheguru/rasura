@@ -526,6 +526,56 @@ pub fn flatten_forms(handle: u32, page_index: usize) -> Result<JsValue, JsValue>
     })
 }
 
+/// Draw new text onto a page. Spec 9.2.
+///
+/// `anchor` is `{ x, y }` for an absolute baseline origin or `{ label, gap? }`
+/// to sit just past a printed caption — see `convert::to_anchor`. `background`,
+/// when given, is an `[r, g, b]` fill drawn behind the text to cover what was
+/// there. The text is Helvetica: added text, reading as added.
+#[wasm_bindgen(js_name = placeText)]
+pub fn place_text(
+    handle: u32,
+    page_index: usize,
+    anchor: JsValue,
+    text: &str,
+    size: f64,
+    background: JsValue,
+) -> Result<JsValue, JsValue> {
+    let anchor = convert::to_anchor(&anchor)?;
+    let background = convert::opt_rgb_value(&background)?;
+    with_session(handle, |session| {
+        let page = session.page(page_index).map_err(convert::from_error)?;
+        let outcome = session
+            .place_text(&page, &anchor, text, size, background)
+            .map_err(convert::from_error)?;
+        Ok(convert::outcome(&outcome))
+    })
+}
+
+/// Create a fillable text field over a rectangle. Spec 10.4.
+///
+/// The "prepare a flat PDF to be signed" primitive: where no field exists, this
+/// makes a named one that `setFieldValue` fills afterwards. `rect` is
+/// `[x0, y0, x1, y1]` in page space.
+#[wasm_bindgen(js_name = createField)]
+pub fn create_field(
+    handle: u32,
+    page_index: usize,
+    rect: JsValue,
+    name: &str,
+    value: &str,
+    size: f64,
+) -> Result<JsValue, JsValue> {
+    let rect = convert::to_rect4(&rect)?;
+    with_session(handle, |session| {
+        let page = session.page(page_index).map_err(convert::from_error)?;
+        let outcome = session
+            .create_field(&page, rect, name, value, size)
+            .map_err(convert::from_error)?;
+        Ok(convert::outcome(&outcome))
+    })
+}
+
 /// Remove every trace of a string from the document. Spec 9.6.
 ///
 /// Not a session operation, and deliberately so: redaction forces a full

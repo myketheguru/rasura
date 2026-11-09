@@ -68,7 +68,7 @@ pub mod ops;
 pub mod page;
 pub mod supply;
 
-pub use edit::{Outcome, Session, SessionState};
+pub use edit::{Outcome, PlaceAnchor, Session, SessionState};
 pub use ops::{EditOp, OpLog};
 pub use error::{Code, Error, Result};
 pub use fonts::{Coverage, FontInfo};

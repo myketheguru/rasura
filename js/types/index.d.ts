@@ -436,7 +436,36 @@ export type EditOp =
   | { op: "setFieldValue"; name: string; value: string }
   | { op: "flattenForms"; page: number }
   | { op: "addAnnotation"; page: number; annotation: NewAnnotation }
-  | { op: "deleteAnnotation"; page: number; id: ObjectId };
+  | { op: "deleteAnnotation"; page: number; id: ObjectId }
+  | {
+      op: "placeText";
+      page: number;
+      x: number;
+      y: number;
+      size: number;
+      text: string;
+      background?: [number, number, number];
+    }
+  | {
+      op: "createField";
+      page: number;
+      rect: [number, number, number, number];
+      name: string;
+      value: string;
+      size: number;
+    };
+
+/**
+ * Where {@link Session#placeText} draws. Spec 9.2.
+ *
+ * Either an absolute baseline origin, or a caption to sit beside: `{ label, gap }`
+ * finds a paragraph whose text contains `label` and places the text `gap` units
+ * past its right edge, on its baseline — the flat-form case, where the space to
+ * fill is to the right of a printed caption.
+ */
+export type PlaceAnchor =
+  | { x: number; y: number }
+  | { label: string; gap?: number };
 
 export interface SessionOptions {
   /**
@@ -518,6 +547,31 @@ export class Session {
   setFieldValue(name: string, value: string): Promise<EditResult>;
   /** Burn widget appearances into the page and drop the fields. One-way. */
   flattenForms(where?: { page?: number }): Promise<EditResult>;
+  /**
+   * Draw new text onto a page. Spec 9.2.
+   *
+   * For adding a value where none was — a caption answer, a stamp — rather than
+   * editing existing text; the face is Helvetica, so it reads as added. The
+   * anchor is an absolute baseline origin `{ x, y }`, or `{ label, gap }` to sit
+   * just past a paragraph containing `label` (the flat-form case). A `background`
+   * fills an `[r, g, b]` rectangle behind the text first, to cover what was there.
+   */
+  placeText(
+    text: string,
+    anchor: PlaceAnchor,
+    opts?: { page?: number; size?: number; background?: [number, number, number] },
+  ): Promise<EditResult>;
+  /**
+   * Create a fillable text field over `[x0, y0, x1, y1]`. Spec 10.4.
+   *
+   * The missing half of "prepare a flat PDF to be signed": where a form has no
+   * field, this makes a named one that {@link Session#setFieldValue} then fills.
+   */
+  createField(
+    name: string,
+    rect: [number, number, number, number],
+    opts?: { page?: number; value?: string; size?: number },
+  ): Promise<EditResult>;
   /** Undo the last operation. Resolves to whether there was one. */
   undo(): Promise<boolean>;
   redo(): Promise<boolean>;

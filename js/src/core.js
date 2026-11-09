@@ -190,6 +190,18 @@ export async function handle(request) {
       case "flattenForms":
         return { result: m.flattenForms(args[0], args[1]), transfer: [] };
 
+      case "placeText":
+        return {
+          result: m.placeText(args[0], args[1], args[2], args[3], args[4], args[5]),
+          transfer: [],
+        };
+
+      case "createField":
+        return {
+          result: m.createField(args[0], args[1], args[2], args[3], args[4], args[5]),
+          transfer: [],
+        };
+
       // Document-level, and outside the session on purpose: each one either
       // forces a full rewrite or re-keys every object, neither of which can be
       // undone by restoring bytes the way a staged edit can.
