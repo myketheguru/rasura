@@ -311,7 +311,9 @@ fn points(source: &JsValue, key: &str) -> Vec<(f64, f64)> {
 }
 
 /// `[{ kind: "heading", level, text|spans } | { kind: "paragraph", text|spans }
-/// | { kind: "list", items }]` to the content list `create` takes.
+/// | { kind: "list", items } | { kind: "table", rows, header? }]` to the
+/// content list `create` takes. A table's `rows` is an array of rows, each an
+/// array of cell strings.
 ///
 /// A heading or paragraph is either one plain string (`text`) or a run of
 /// styled spans (`spans: [{ text, bold?, italic? }]`). `spans` wins when both
@@ -345,6 +347,26 @@ pub fn to_content(source: &JsValue) -> Result<Vec<rasura::create::Content>, JsVa
                     .dyn_into::<Array>()
                     .map(|a| a.iter().filter_map(|v| v.as_string()).collect())
                     .unwrap_or_default(),
+            },
+            "table" => Content::Table {
+                // `rows` is an array of rows, each an array of cell strings.
+                // A row that is not an array becomes an empty row rather than a
+                // refusal: the grid still composes, ragged rows padded.
+                rows: get(&item, "rows")
+                    .dyn_into::<Array>()
+                    .map(|rows| {
+                        rows.iter()
+                            .map(|row| {
+                                row.dyn_into::<Array>()
+                                    .map(|cells| {
+                                        cells.iter().map(|c| c.as_string().unwrap_or_default()).collect()
+                                    })
+                                    .unwrap_or_default()
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                header: bool_or(&item, "header", false),
             },
             other => {
                 return Err(err(

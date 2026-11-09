@@ -58,6 +58,43 @@ test("create composes emphasis in the faces the family supplies", async () => {
   }
 });
 
+test("a table is composed as a grid and reads back", async () => {
+  if (!have("Roboto-Regular.ttf")) {
+    console.log("  (skipped: run ./corpus/fetch-font.sh)");
+    return;
+  }
+
+  const { document, report } = await Pdf.create(
+    [
+      { kind: "heading", level: 1, text: "Hours" },
+      {
+        kind: "table",
+        header: true,
+        rows: [
+          ["Task", "Hours"],
+          ["Design", "12"],
+          ["Build", "30"],
+        ],
+      },
+    ],
+    read("Roboto-Regular.ttf"),
+    { worker: false },
+  );
+
+  try {
+    // Drawn as a grid, not dropped as an approximation.
+    assert.equal(report.approximated, 0, "a table is composed, not approximated");
+    assert.equal(report.missing.length, 0);
+
+    const page = await document.page(0);
+    assert.ok(page.tables().length >= 1, "the grid reads back as a table");
+    const text = page.paragraphs().map((p) => p.text).join(" ");
+    assert.ok(text.includes("Design"), `cell text is present: ${text}`);
+  } finally {
+    await document.close();
+  }
+});
+
 test("a one-face family substitutes nothing until a run asks for another", async () => {
   if (!have("Roboto-Regular.ttf")) {
     console.log("  (skipped: run ./corpus/fetch-font.sh)");

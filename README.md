@@ -101,6 +101,15 @@ const { document, report } = await Pdf.create(
       ],
     },
     { kind: 'list', items: ['Design, 12 hours', 'Build, 30 hours'] },
+    {
+      kind: 'table',
+      header: true,
+      rows: [
+        ['Task', 'Hours'],
+        ['Design', '12'],
+        ['Build', '30'],
+      ],
+    },
   ],
   regular,
   { pageSize: 'a4', bold },

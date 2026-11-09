@@ -51,7 +51,13 @@ export type Content =
   | { kind: "paragraph"; text: string }
   | { kind: "paragraph"; spans: readonly Span[] }
   /** Drawn as its lines, without bullets; counted in `Composition.approximated`. */
-  | { kind: "list"; items: readonly string[] };
+  | { kind: "list"; items: readonly string[] }
+  /**
+   * A grid of cells, row-major, drawn with its rules. Equal-width columns, each
+   * cell wrapped to its column; ragged rows padded to the widest row.
+   * `header` draws the first row with a heavier rule beneath it.
+   */
+  | { kind: "table"; rows: ReadonlyArray<readonly string[]>; header?: boolean };
 
 export interface CreateOptions extends OpenOptions {
   /** Defaults to `"letter"`. */

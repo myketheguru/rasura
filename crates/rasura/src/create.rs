@@ -93,6 +93,14 @@ pub enum Content {
     List {
         items: Vec<String>,
     },
+    /// A grid of cells, row-major, drawn with its rules. Columns are laid out
+    /// equal-width and a cell wraps to the measure of its column; ragged rows
+    /// are padded to the widest row's column count.
+    Table {
+        rows: Vec<Vec<String>>,
+        /// Whether the first row is a header, drawn with a heavier rule beneath.
+        header: bool,
+    },
 }
 
 impl Content {
@@ -114,6 +122,16 @@ impl Content {
     /// A paragraph built from styled runs.
     pub fn paragraph_spans(spans: Vec<Span>) -> Content {
         Content::Paragraph { spans }
+    }
+
+    /// A table of plain-text cells, no header row.
+    pub fn table(rows: Vec<Vec<String>>) -> Content {
+        Content::Table { rows, header: false }
+    }
+
+    /// A table whose first row is a header.
+    pub fn table_with_header(rows: Vec<Vec<String>>) -> Content {
+        Content::Table { rows, header: true }
     }
 
     fn to_block(&self) -> flow::Block {
@@ -138,6 +156,23 @@ impl Content {
                     })
                     .collect(),
                 ordered: false,
+                source: None,
+            }),
+            Content::Table { rows, header } => flow::Block::Table(flow::Table {
+                rows: rows
+                    .iter()
+                    .map(|row| {
+                        row.iter()
+                            .map(|cell| flow::Cell {
+                                blocks: vec![flow::Block::Paragraph {
+                                    inlines: vec![flow::Inline::text(cell)],
+                                    source: None,
+                                }],
+                            })
+                            .collect()
+                    })
+                    .collect(),
+                has_header: *header,
                 source: None,
             }),
         }
@@ -420,6 +455,42 @@ mod tests {
                 .unwrap();
         assert_eq!(report.faces.len(), 1, "one face embedded: {:?}", report.faces);
         assert!(report.substituted.is_empty(), "plain text asks for no other face");
+    }
+
+    #[test]
+    fn a_table_composes_as_a_grid_and_reads_back() {
+        let Some(font) = roboto() else {
+            eprintln!("skipped: run ./corpus/fetch-font.sh");
+            return;
+        };
+
+        let (doc, report) = Document::create(
+            &[
+                Content::heading(1, "Hours"),
+                Content::table_with_header(vec![
+                    vec!["Task".into(), "Hours".into()],
+                    vec!["Design".into(), "12".into()],
+                    vec!["Build".into(), "30".into()],
+                ]),
+            ],
+            &Options::with_font(font),
+        )
+        .unwrap();
+
+        // The table is drawn, not dropped as an approximation.
+        assert_eq!(report.approximated, 0, "a table is composed as a grid: {report:?}");
+        assert!(report.missing.is_empty());
+
+        // It reads back: the reader reconstructs the table, and the cell text is
+        // in the page.
+        assert_eq!(doc.page_count(), 1);
+        let page = doc.page(0).unwrap();
+        assert!(!page.tables().is_empty(), "the composed grid reads back as a table");
+        let text: String = page.paragraphs().iter().map(|p| p.text.as_str()).collect();
+        assert!(text.contains("Design"), "cell text is present: {text:?}");
+
+        let saved = doc.save(&Default::default()).unwrap();
+        assert_eq!(Document::open(saved.bytes).unwrap().page_count(), 1);
     }
 
     #[test]

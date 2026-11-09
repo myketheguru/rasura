@@ -162,7 +162,8 @@ pub fn open_document(
 ///
 /// `content` is an array of `{ kind, text }` — a heading or paragraph may give
 /// `spans: [{ text, bold?, italic? }]` instead of `text` for emphasis — or
-/// `{ kind: "list", items }`, rather than a typed enum, because a `JsValue` is
+/// `{ kind: "list", items }` or `{ kind: "table", rows, header? }`, rather than
+/// a typed enum, because a `JsValue` is
 /// what crosses and inventing a class for these shapes would put a constructor
 /// on the JS side that has to stay in step with this one.
 ///
