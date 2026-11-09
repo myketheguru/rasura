@@ -158,6 +158,17 @@ impl Measurer for rasura_font::create::Embedded {
     }
 }
 
+/// A run of text in one face within a line.
+///
+/// A line is a sequence of these: "the **bold** word" is three runs, regular,
+/// bold, regular, each measured and drawn in its own face. A plain line is a
+/// single run, which is every line until an inline carried emphasis.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Run {
+    pub text: String,
+    pub style: TextStyle,
+}
+
 /// A list marker drawn in the margin to the left of a line.
 ///
 /// The bullet or number of a list item, carried as its own thing rather than
@@ -183,14 +194,28 @@ pub struct PlacedLine {
     pub rect: Rect,
     /// What it was set in.
     ///
-    /// Carried rather than recovered. The emitter used to ask a helper for the
-    /// size and get the body size back whatever the block was, so every heading
-    /// was measured at heading size and *drawn* at body size — the wrong glyph
-    /// size at a baseline computed for a different one. The value is right here
-    /// at placement time and costs three words to keep.
+    /// The line's dominant style — its first run's — kept for the size and for
+    /// callers that do not care about per-run faces. Carried rather than
+    /// recovered: the emitter used to ask a helper for the size and get the body
+    /// size back whatever the block was, so every heading was measured at heading
+    /// size and *drawn* at body size — the wrong glyph size at a baseline
+    /// computed for a different one.
     pub style: TextStyle,
     /// A list marker to draw left of this line, if it opens a list item.
     pub marker: Option<Marker>,
+    /// The line's text as runs, each in one face. One run for a plain line;
+    /// more where inline emphasis changed the face mid-line. `text` is their
+    /// concatenation and `style` is the first run's.
+    pub runs: Vec<Run>,
+}
+
+impl PlacedLine {
+    /// Build a line from its runs, deriving `text` and `style` from them.
+    fn new(runs: Vec<Run>, rect: Rect, marker: Option<Marker>) -> PlacedLine {
+        let text = runs.iter().map(|r| r.text.as_str()).collect::<String>();
+        let style = runs.first().map(|r| r.style).unwrap_or_default();
+        PlacedLine { text, rect, style, marker, runs }
+    }
 }
 
 /// The rules of a table: where the lines between cells go.
@@ -507,6 +532,19 @@ pub fn layout(
             continue;
         }
 
+        // Paragraphs and headings carry inline emphasis, so they are broken as
+        // runs rather than as a flat string — each word measured in its own
+        // face. The plain lines the split arithmetic below counts and rejoins
+        // are derived from those runs, so for a block with no emphasis this is
+        // identical to the old path and only mixed emphasis takes the new one.
+        let runs_lines: Vec<Vec<Run>> = match block {
+            Block::Paragraph { inlines, .. } | Block::Heading { inlines, .. } => {
+                break_runs(inlines, style, measure, measurer)
+            }
+            _ => lines.iter().map(|t| vec![Run { text: t.clone(), style }]).collect(),
+        };
+        let lines: Vec<String> = runs_lines.iter().map(|r| runs_text(r)).collect();
+
         // A heading is kept with what follows by refusing to be the last thing
         // in a frame: it needs room for itself and one line of the next block.
         //
@@ -554,14 +592,13 @@ pub fn layout(
         }
 
         let frame_rect = page_frames[cursor.frame].rect;
-        let placed = lines[..fit].to_vec();
-        let height = placed.len() as f64 * line_height;
+        let height = fit as f64 * line_height;
         out.blocks.push(PlacedBlock {
             source: index,
             page: cursor.page,
             frame: cursor.frame,
             rect: Rect::new(frame_rect.x0, cursor.y, frame_rect.x1, cursor.y + height),
-            lines: position(&placed, frame_rect, cursor.y, line_height, style),
+            lines: position_runs(&runs_lines[..fit], frame_rect, cursor.y, line_height),
             continued: false,
             grid: None,
         });
@@ -774,17 +811,13 @@ fn place_table(
             let cell_x = frame.x0 + c as f64 * col_width + CELL_PAD;
             for (j, text) in cell_lines.iter().enumerate() {
                 let line_top = y + CELL_PAD + j as f64 * line_height;
-                placed_lines.push(PlacedLine {
-                    text: text.clone(),
-                    style,
-                    marker: None,
-                    rect: Rect::new(
-                        cell_x,
-                        line_top,
-                        cell_x + text_measure,
-                        line_top + line_height,
-                    ),
-                });
+                let rect =
+                    Rect::new(cell_x, line_top, cell_x + text_measure, line_top + line_height);
+                placed_lines.push(PlacedLine::new(
+                    vec![Run { text: text.clone(), style }],
+                    rect,
+                    None,
+                ));
             }
         }
         y += row_heights[r];
@@ -893,18 +926,146 @@ fn position_specs(
     specs
         .iter()
         .enumerate()
-        .map(|(i, spec)| PlacedLine {
-            text: spec.text.clone(),
-            style,
-            marker: spec.marker.as_ref().map(|m| Marker { text: m.clone(), x: frame.x0 }),
-            rect: Rect::new(
+        .map(|(i, spec)| {
+            let rect = Rect::new(
                 frame.x0 + spec.indent,
                 top + i as f64 * line_height,
                 frame.x1,
                 top + (i + 1) as f64 * line_height,
-            ),
+            );
+            let marker = spec.marker.as_ref().map(|m| Marker { text: m.clone(), x: frame.x0 });
+            PlacedLine::new(vec![Run { text: spec.text.clone(), style }], rect, marker)
         })
         .collect()
+}
+
+/// Position lines that already carry their runs, as the styled Paragraph and
+/// Heading path produces. No marker, no indent — those belong to lists, which do
+/// not carry inline emphasis.
+fn position_runs(
+    lines: &[Vec<Run>],
+    frame: Rect,
+    top: f64,
+    line_height: f64,
+) -> Vec<PlacedLine> {
+    lines
+        .iter()
+        .enumerate()
+        .map(|(i, runs)| {
+            let rect = Rect::new(
+                frame.x0,
+                top + i as f64 * line_height,
+                frame.x1,
+                top + (i + 1) as f64 * line_height,
+            );
+            PlacedLine::new(runs.clone(), rect, None)
+        })
+        .collect()
+}
+
+/// Break a block's inline runs into lines of runs, honouring emphasis.
+///
+/// The styled counterpart of [`break_lines`]. It breaks greedily to the same
+/// measure, but each word is measured in its own face, so a line of bold text
+/// wraps where bold text wraps rather than where the regular measure would put
+/// it. An [`Inline::Break`] ends a line wherever the author put one.
+///
+/// For a block whose every run is the base style this produces exactly what
+/// `break_lines` would — one run per line, broken identically — because the
+/// per-word widths it sums are the same characters the whole-string measure
+/// sums. So the plain path is unchanged and only mixed emphasis takes the new
+/// branch.
+fn break_runs(
+    inlines: &[Inline],
+    base: TextStyle,
+    measure: f64,
+    measurer: &impl Measurer,
+) -> Vec<Vec<Run>> {
+    // Flatten to a stream of styled words and hard breaks.
+    enum Tok {
+        Word(String, TextStyle),
+        Break,
+    }
+    let mut tokens = Vec::new();
+    for inline in inlines {
+        match inline {
+            Inline::Text { text, emphasis } => {
+                let style = TextStyle {
+                    size: base.size,
+                    bold: base.bold || emphasis.bold,
+                    italic: base.italic || emphasis.italic,
+                };
+                for word in text.split_whitespace() {
+                    tokens.push(Tok::Word(word.to_string(), style));
+                }
+            }
+            Inline::Break => tokens.push(Tok::Break),
+        }
+    }
+
+    let mut lines: Vec<Vec<(String, TextStyle)>> = Vec::new();
+    let mut current: Vec<(String, TextStyle)> = Vec::new();
+    let mut width = 0.0;
+
+    for tok in tokens {
+        match tok {
+            Tok::Break => {
+                lines.push(std::mem::take(&mut current));
+                width = 0.0;
+            }
+            Tok::Word(word, style) => {
+                let word_w = measurer.width(&word, style);
+                if current.is_empty() {
+                    current.push((word, style));
+                    width = word_w;
+                } else {
+                    let candidate = width + measurer.width(" ", style) + word_w;
+                    if candidate <= measure {
+                        current.push((word, style));
+                        width = candidate;
+                    } else {
+                        lines.push(std::mem::take(&mut current));
+                        current.push((word, style));
+                        width = word_w;
+                    }
+                }
+            }
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+
+    // Merge each line's words into runs: adjacent same-style words become one
+    // run, the separating space kept in the left run so the x of the next run is
+    // where its first glyph lands.
+    lines.into_iter().map(merge_runs).collect()
+}
+
+/// Merge a line's styled words into runs, same-style words joined by a space.
+fn merge_runs(words: Vec<(String, TextStyle)>) -> Vec<Run> {
+    let mut runs: Vec<Run> = Vec::new();
+    for (i, (word, style)) in words.into_iter().enumerate() {
+        match runs.last_mut() {
+            Some(run) if run.style == style => {
+                run.text.push(' ');
+                run.text.push_str(&word);
+            }
+            Some(run) if i > 0 => {
+                // A style change: the separating space stays with the run that
+                // ends, then the new run begins.
+                run.text.push(' ');
+                runs.push(Run { text: word, style });
+            }
+            _ => runs.push(Run { text: word, style }),
+        }
+    }
+    runs
+}
+
+/// The plain text of a line's runs, as `break_lines` would have produced it.
+fn runs_text(runs: &[Run]) -> String {
+    runs.iter().map(|r| r.text.as_str()).collect()
 }
 
 /// Whether a block's lines may be divided across frames.
@@ -1370,6 +1531,48 @@ mod tests {
         for cell in ["Name", "Price", "Apples", "2.00"] {
             assert!(joined.contains(cell), "cell {cell:?} missing from {joined:?}");
         }
+    }
+
+    #[test]
+    fn a_paragraph_with_emphasis_breaks_into_styled_runs() {
+        use crate::flow::{Emphasis, Inline};
+        let bold = Emphasis { bold: true, ..Emphasis::default() };
+        let italic = Emphasis { italic: true, ..Emphasis::default() };
+        let inlines = vec![
+            Inline::text("A sentence with a "),
+            Inline::Text { text: "bold".into(), emphasis: bold },
+            Inline::text(" word and an "),
+            Inline::Text { text: "italic".into(), emphasis: italic },
+            Inline::text(" one."),
+        ];
+        let flow = doc(vec![Block::Paragraph { inlines, source: None }]);
+        let (placed, _) = layout(&flow, &one_column(), &Options::default(), &Standard14);
+
+        let runs: Vec<&Run> = placed.blocks[0].lines.iter().flat_map(|l| &l.runs).collect();
+        assert!(
+            runs.iter().any(|r| r.text.contains("bold") && r.style.bold && !r.style.italic),
+            "a bold run in its own face: {runs:?}"
+        );
+        assert!(
+            runs.iter().any(|r| r.text.contains("italic") && r.style.italic && !r.style.bold),
+            "an italic run in its own face: {runs:?}"
+        );
+        // And the plain text still reads as the whole sentence.
+        let text = placed.blocks[0].text();
+        assert!(text.contains("bold") && text.contains("italic") && text.contains("sentence"));
+    }
+
+    #[test]
+    fn plain_runs_break_exactly_as_the_flat_string_does() {
+        // The backward-compatibility claim: a paragraph with no emphasis breaks
+        // into the same lines whether measured as runs or as one flat string, so
+        // the run model changes nothing for the common case.
+        let text = prose(200);
+        let flat = break_lines(&text, 468.0, TextStyle::default(), &Standard14);
+        let inlines = vec![crate::flow::Inline::text(text.clone())];
+        let runs = break_runs(&inlines, TextStyle::default(), 468.0, &Standard14);
+        let from_runs: Vec<String> = runs.iter().map(|r| runs_text(r)).collect();
+        assert_eq!(flat, from_runs);
     }
 
     #[test]

@@ -31,15 +31,15 @@
 //! simplification that remains in a table: sizing columns to their content is a
 //! refinement the rules do not need in order to be right.
 
-use crate::flow::{Block, FlowDocument};
-use crate::layout::{self, Layout};
+use crate::flow::{Block, FlowDocument, Inline};
+use crate::layout::{self, Layout, Measurer, TextStyle};
 use rasura_cos::Document;
 use rasura_cos::object::{Dictionary, Name, ObjId, Object, PdfString};
 use rasura_edit::pages::{PageSpec, insert_page};
 use rasura_edit::{Canvas, EditSession, Fidelity};
 use rasura_font::create::{Embedded, Options as FontOptions, embed_truetype};
 use rasura_layout::frames::{FrameSet, PageGeometry};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// How to compose.
 #[derive(Debug, Clone)]
@@ -83,6 +83,14 @@ pub struct Report {
     pub composite: bool,
     /// Whether the `/StemV` written into the descriptor was estimated.
     pub stem_v_guessed: bool,
+    /// The base font of every face embedded, regular first. One entry unless the
+    /// document used bold or italic and a family supplied those faces.
+    pub faces: Vec<String>,
+    /// Faces the document asked for that the family did not supply, so the text
+    /// was drawn in the regular face instead. Named rather than faked: a bold run
+    /// set in the regular face is a compromise the caller is told about, not a
+    /// synthetic bold that would measure wrong.
+    pub substituted: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -99,15 +107,123 @@ pub enum ComposeError {
     Empty,
 }
 
-/// Compose `flow` into a new document, set in `font_program`.
+/// A family of up to four faces to compose a document in.
+///
+/// Only `regular` is required. A document that uses bold or italic and whose
+/// family supplies those faces is drawn in them; one whose family does not is
+/// drawn in the regular face and told so, in [`Report::substituted`] — because
+/// faking a bold by widening a regular would make the text overflow its measure
+/// rather than admit the face is missing. A document that needs a face embeds
+/// it; one that does not pays for nothing it did not use.
+#[derive(Debug, Clone, Default)]
+pub struct Family {
+    pub regular: Vec<u8>,
+    pub bold: Option<Vec<u8>>,
+    pub italic: Option<Vec<u8>>,
+    pub bold_italic: Option<Vec<u8>>,
+}
+
+impl Family {
+    /// A family of one face, which composes everything in the regular program —
+    /// what [`compose`] builds from its single font.
+    pub fn regular(program: &[u8]) -> Family {
+        Family { regular: program.to_vec(), ..Family::default() }
+    }
+
+    /// The program for a `(bold, italic)` request, or `None` when the family does
+    /// not supply that face and the caller should fall back to the regular.
+    fn program(&self, bold: bool, italic: bool) -> Option<&[u8]> {
+        match (bold, italic) {
+            (false, false) => Some(&self.regular),
+            (true, false) => self.bold.as_deref(),
+            (false, true) => self.italic.as_deref(),
+            (true, true) => self.bold_italic.as_deref(),
+        }
+    }
+}
+
+/// Compose `flow` into a new document, set in one face, `font_program`.
+///
+/// The single-face case: every run is drawn in the one program whatever its
+/// emphasis. [`compose_family`] draws bold and italic in their own faces.
 pub fn compose(
     flow: &FlowDocument,
     font_program: &[u8],
     opts: &Options,
 ) -> Result<(Document, Report), ComposeError> {
-    // Every character the document will draw, so the subset holds exactly that
-    // and nothing else. Whitespace is included deliberately: a font with no
-    // space glyph still needs the code to advance, and `for_text` keeps it.
+    compose_family(flow, &Family::regular(font_program), opts)
+}
+
+/// One embedded face: the program embedded once, and the resource name the
+/// content streams reach it by.
+struct FaceEmbed {
+    resource: String,
+    embedded: Embedded,
+}
+
+/// A measurer backed by a whole family: each run measured in its own face.
+///
+/// The reason the layout engine takes a [`Measurer`] rather than one font. A
+/// bold run is wider than the same words set regular, and a line of it has to
+/// break where bold breaks — laying it out with the regular metrics and drawing
+/// it bold is the ordinary way composed text overflows its column.
+struct FamilyMeasurer<'a> {
+    embeds: &'a [FaceEmbed],
+    /// Which embedded face draws a `(bold, italic)` request — a fallback face
+    /// points at the regular's index.
+    faces: &'a BTreeMap<(bool, bool), usize>,
+}
+
+impl FamilyMeasurer<'_> {
+    fn face_of(&self, style: TextStyle) -> usize {
+        self.faces.get(&(style.bold, style.italic)).copied().unwrap_or(0)
+    }
+}
+
+impl Measurer for FamilyMeasurer<'_> {
+    fn width(&self, text: &str, style: TextStyle) -> f64 {
+        self.embeds[self.face_of(style)].embedded.width(text, style.size)
+    }
+}
+
+/// The `(bold, italic)` faces the document's runs call for.
+///
+/// Read from the flow, not the placement, so it can be known before anything is
+/// embedded — which is what breaks the circle of "measure to lay out, lay out to
+/// know the faces, embed the faces to measure". A heading is bold by the layout's
+/// own rule, so its runs count as bold here too. Regular is always present: list
+/// markers, table cells and the fallback all need it.
+fn used_faces(flow: &FlowDocument) -> BTreeSet<(bool, bool)> {
+    let mut set = BTreeSet::new();
+    set.insert((false, false));
+    for block in &flow.blocks {
+        let (base_bold, inlines) = match block {
+            Block::Heading { inlines, .. } => (true, inlines),
+            Block::Paragraph { inlines, .. } => (false, inlines),
+            _ => continue,
+        };
+        for inline in inlines {
+            if let Inline::Text { emphasis, .. } = inline {
+                set.insert((base_bold || emphasis.bold, emphasis.italic));
+            }
+        }
+    }
+    set
+}
+
+/// Compose `flow` into a new document set in `family`, drawing bold and italic
+/// in their own faces where the family supplies them. Spec 9.2.
+pub fn compose_family(
+    flow: &FlowDocument,
+    family: &Family,
+    opts: &Options,
+) -> Result<(Document, Report), ComposeError> {
+    // Every character the document will draw, so each face's subset holds exactly
+    // that. Whitespace is included deliberately: a font with no space glyph still
+    // needs the code to advance, and `for_text` keeps it. Each face embeds the
+    // whole set rather than only the characters that happen to appear in its runs
+    // — a face short one glyph would drop it silently, and the saving is not worth
+    // that risk.
     let mut characters: BTreeSet<char> = flow
         .blocks
         .iter()
@@ -117,24 +233,68 @@ pub fn compose(
     if characters.is_empty() {
         return Err(ComposeError::Empty);
     }
-    // List markers are drawn but are not in any block's text, so the subset would
-    // not otherwise hold their glyphs. A bullet with no glyph in the font would
-    // be reported missing and the list would lose its markers silently.
     characters.extend(marker_chars(flow));
 
     let mut doc = Document::new();
-    let embedded = {
+
+    // Embed the regular face first, then each other used face the family
+    // supplies. A used face it does not supply falls back to the regular, which
+    // is already embedded, so nothing is embedded twice.
+    let mut embeds: Vec<FaceEmbed> = Vec::new();
+    let mut faces: BTreeMap<(bool, bool), usize> = BTreeMap::new();
+    let mut substituted: Vec<String> = Vec::new();
+
+    let embed = |doc: &mut Document, program: &[u8]| -> Result<Embedded, ComposeError> {
         let next = || doc.reserve(1)[0];
-        embed_truetype(font_program, &FontOptions { characters, ..FontOptions::default() }, next)
-            .map_err(|e| ComposeError::Font(e.to_string()))?
+        embed_truetype(program, &FontOptions { characters: characters.clone(), ..FontOptions::default() }, next)
+            .map_err(|e| ComposeError::Font(e.to_string()))
     };
 
-    // Laid out with the font that will draw it. This is the whole reason
-    // `Embedded` implements `Measurer`.
+    let regular = embed(&mut doc, &family.regular)?;
+    embeds.push(FaceEmbed { resource: opts.font_resource.clone(), embedded: regular });
+    faces.insert((false, false), 0);
+
+    for &(bold, italic) in used_faces(flow).iter() {
+        if (bold, italic) == (false, false) {
+            continue;
+        }
+        match family.program(bold, italic) {
+            Some(program) => {
+                let embedded = embed(&mut doc, program)?;
+                let idx = embeds.len();
+                // Derived from the regular's name, so the names cannot collide:
+                // F1 -> F1B, F1I, F1BI.
+                let suffix = match (bold, italic) {
+                    (true, true) => "BI",
+                    (true, false) => "B",
+                    (false, true) => "I",
+                    (false, false) => "",
+                };
+                embeds.push(FaceEmbed {
+                    resource: format!("{}{suffix}", opts.font_resource),
+                    embedded,
+                });
+                faces.insert((bold, italic), idx);
+            }
+            None => {
+                // The family has no such face: draw it regular and say so.
+                faces.insert((bold, italic), 0);
+                substituted.push(face_name(bold, italic));
+            }
+        }
+    }
+
+    // Laid out with the family that will draw it, so each run breaks in its face.
     let frames = FrameSet::designed(&opts.geometry);
-    let (placed, _) = layout::layout(flow, &frames, &opts.layout, &embedded);
+    let measurer = FamilyMeasurer { embeds: &embeds, faces: &faces };
+    let (placed, _) = layout::layout(flow, &frames, &opts.layout, &measurer);
     if placed.blocks.is_empty() {
         return Err(ComposeError::Empty);
+    }
+
+    let mut missing: BTreeSet<char> = BTreeSet::new();
+    for f in &embeds {
+        missing.extend(f.embedded.missing.iter().copied());
     }
 
     let mut report = Report {
@@ -149,28 +309,34 @@ pub fn compose(
                 flow.blocks.get(b.source).is_some_and(|s| matches!(s, Block::Figure { .. }))
             })
             .count(),
-        missing: embedded.missing.clone(),
-        base_font: embedded.base_font.clone(),
-        composite: embedded.composite,
-        stem_v_guessed: embedded.description.stem_v_guessed,
+        missing: missing.into_iter().collect(),
+        base_font: embeds[0].embedded.base_font.clone(),
+        composite: embeds.iter().any(|f| f.embedded.composite),
+        stem_v_guessed: embeds.iter().any(|f| f.embedded.description.stem_v_guessed),
+        faces: embeds.iter().map(|f| f.embedded.base_font.clone()).collect(),
+        substituted,
         ..Report::default()
     };
 
-    // The font must be reachable from every page by the name the content
-    // streams use. A content stream naming a resource the page does not define
-    // draws nothing, and does it silently.
+    // Every face must be reachable from every page by the name its runs use. A
+    // content stream naming a resource the page does not define draws nothing,
+    // and does it silently.
     let mut fonts = Dictionary::new();
-    fonts.insert(opts.font_resource.as_str(), Object::Reference(embedded.font));
+    for f in &embeds {
+        fonts.insert(f.resource.as_str(), Object::Reference(f.embedded.font));
+    }
     let mut resources = Dictionary::new();
     resources.insert("Font", Object::Dictionary(fonts));
 
     let height = opts.geometry.size.1;
     let media_box = [0.0, 0.0, opts.geometry.size.0, height];
-    let changes: Vec<(ObjId, Option<Object>)> =
-        embedded.objects.iter().map(|(id, o)| (*id, Some(o.clone()))).collect();
+    let changes: Vec<(ObjId, Option<Object>)> = embeds
+        .iter()
+        .flat_map(|f| f.embedded.objects.iter().map(|(id, o)| (*id, Some(o.clone()))))
+        .collect();
 
     for page in 0..placed.pages {
-        let (content, lines, dropped) = draw_page(&placed, page, height, &embedded, opts);
+        let (content, lines, dropped) = draw_page(&placed, page, height, &embeds, &faces);
         report.lines += lines;
         report.dropped += dropped;
 
@@ -194,7 +360,7 @@ pub fn compose(
     {
         let mut session = EditSession::new(&mut doc);
         session
-            .set_objects("embed font", &changes, Fidelity::Exact)
+            .set_objects("embed fonts", &changes, Fidelity::Exact)
             .map_err(|e| ComposeError::Cos(e.to_string()))?;
     }
 
@@ -208,18 +374,33 @@ pub fn compose(
     Ok((doc, report))
 }
 
-/// One page's content stream.
+/// A human name for a `(bold, italic)` face, for the substitution report.
+fn face_name(bold: bool, italic: bool) -> String {
+    match (bold, italic) {
+        (true, true) => "bold italic".to_string(),
+        (true, false) => "bold".to_string(),
+        (false, true) => "italic".to_string(),
+        (false, false) => "regular".to_string(),
+    }
+}
+
+/// One page's content stream, drawing each run of each line in its own face.
 fn draw_page(
     placed: &Layout,
     page: usize,
     height: f64,
-    embedded: &Embedded,
-    opts: &Options,
+    embeds: &[FaceEmbed],
+    faces: &BTreeMap<(bool, bool), usize>,
 ) -> (Vec<u8>, usize, usize) {
-    let font = Name::new(&opts.font_resource);
     let mut canvas = Canvas::new(rasura_edit::numfmt::NumberStyle::default());
     let mut lines = 0;
     let mut dropped = 0;
+
+    // The embedded face a run's style is drawn in — a fallback points at the
+    // regular, which is index 0.
+    let face_of = |style: &TextStyle| -> usize {
+        faces.get(&(style.bold, style.italic)).copied().unwrap_or(0)
+    };
 
     canvas.fill_gray(0.0);
     for block in placed.blocks.iter().filter(|b| b.page == page) {
@@ -230,24 +411,39 @@ fn draw_page(
             // it.
             let baseline = height - (line.rect.y0 + line.style.size);
 
-            // A list item's marker, drawn in the gutter to the left of the text.
-            // It sits on the same baseline but at its own x, and is drawn even
-            // when the item's text is empty — the marker is the content then.
+            // A list item's marker, drawn in the gutter to the left of the text,
+            // in the regular face. It sits on the same baseline but at its own x,
+            // and is drawn even when the item's text is empty — the marker is the
+            // content then.
             if let Some(marker) = &line.marker {
-                let (codes, lost) = embedded.encode(&marker.text);
+                let face = &embeds[0];
+                let (codes, lost) = face.embedded.encode(&marker.text);
                 dropped += lost;
                 if !codes.is_empty() {
-                    canvas.text_line(&font, line.style.size, marker.x, baseline, &codes);
+                    let name = Name::new(&face.resource);
+                    canvas.text_line(&name, line.style.size, marker.x, baseline, &codes);
                 }
             }
 
-            let (codes, lost) = embedded.encode(&line.text);
-            dropped += lost;
-            if codes.is_empty() {
-                continue;
+            // Each run drawn in its face, advancing x by the width it draws at so
+            // the next run begins exactly where this one ends.
+            let mut x = line.rect.x0;
+            let mut drew = false;
+            for run in &line.runs {
+                let face = &embeds[face_of(&run.style)];
+                let advance = face.embedded.width(&run.text, run.style.size);
+                let (codes, lost) = face.embedded.encode(&run.text);
+                dropped += lost;
+                if !codes.is_empty() {
+                    let name = Name::new(&face.resource);
+                    canvas.text_line(&name, run.style.size, x, baseline, &codes);
+                    drew = true;
+                }
+                x += advance;
             }
-            canvas.text_line(&font, line.style.size, line.rect.x0, baseline, &codes);
-            lines += 1;
+            if drew {
+                lines += 1;
+            }
         }
 
         // A table's rules, stroked after its cell text. The grid is in the
@@ -507,6 +703,75 @@ mod tests {
         for word in ["Item", "Price", "Apples", "2.00"] {
             assert!(text.contains(word), "cell {word:?} missing from page: {text:?}");
         }
+    }
+
+    fn roboto_face(name: &str) -> Option<Vec<u8>> {
+        std::fs::read(format!(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../../corpus/fonts/Roboto-{}.ttf"),
+            name
+        ))
+        .ok()
+    }
+
+    fn emphasised_paragraph() -> FlowDocument {
+        use crate::flow::{Emphasis, Inline};
+        let bold = Emphasis { bold: true, ..Emphasis::default() };
+        let italic = Emphasis { italic: true, ..Emphasis::default() };
+        FlowDocument {
+            blocks: vec![Block::Paragraph {
+                inlines: vec![
+                    Inline::text("A line with a "),
+                    Inline::Text { text: "bold".into(), emphasis: bold },
+                    Inline::text(" word and an "),
+                    Inline::Text { text: "italic".into(), emphasis: italic },
+                    Inline::text(" word."),
+                ],
+                source: None,
+            }],
+            ..FlowDocument::default()
+        }
+    }
+
+    #[test]
+    fn bold_and_italic_are_drawn_in_their_own_faces() {
+        let (Some(regular), Some(bold), Some(italic)) =
+            (roboto_face("Regular"), roboto_face("Bold"), roboto_face("Italic"))
+        else {
+            eprintln!("skipped: run ./corpus/fetch-font.sh");
+            return;
+        };
+        let family = Family { regular, bold: Some(bold), italic: Some(italic), bold_italic: None };
+        let (doc, report) =
+            compose_family(&emphasised_paragraph(), &family, &Options::default()).unwrap();
+
+        assert_eq!(report.dropped, 0, "{:?}", report.missing);
+        assert!(report.substituted.is_empty(), "the family supplies every face used: {:?}", report.substituted);
+        assert_eq!(report.faces.len(), 3, "regular, bold and italic embedded: {:?}", report.faces);
+
+        let saved = rasura_cos::save(&doc, &rasura_cos::SaveOptions::default()).unwrap();
+        let reopened = Document::open(saved.bytes).expect("what was composed reopens");
+        assert_eq!(reopened.leniencies(), Vec::new(), "three faces, still well-formed");
+        let tree = rasura_content::page::pages(&reopened).unwrap();
+        let text = rasura_layout::page_text(&reopened, &tree.pages[0]);
+        assert!(text.contains("bold") && text.contains("italic"), "{text:?}");
+    }
+
+    #[test]
+    fn a_face_the_family_lacks_is_substituted_and_reported() {
+        let Some(regular) = roboto_face("Regular") else {
+            eprintln!("skipped: run ./corpus/fetch-font.sh");
+            return;
+        };
+        // Regular only: the bold and italic runs have nowhere to go but the
+        // regular face, and that compromise is named rather than hidden.
+        let (_, report) =
+            compose_family(&emphasised_paragraph(), &Family::regular(&regular), &Options::default())
+                .unwrap();
+        assert_eq!(report.faces.len(), 1, "only the regular face is embedded: {:?}", report.faces);
+        assert!(report.substituted.contains(&"bold".to_string()), "{:?}", report.substituted);
+        assert!(report.substituted.contains(&"italic".to_string()), "{:?}", report.substituted);
+        // Substituted, not dropped: the words are still drawn.
+        assert_eq!(report.dropped, 0, "{:?}", report.missing);
     }
 
     #[test]

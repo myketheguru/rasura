@@ -31,7 +31,8 @@ mkdir -p "$dest"
 # exact URL as the file's `download_url` -- so the bytes were never the
 # problem, only the hop that used to reach them. This is the canonical host and
 # there is no redirect to lose.
-url="https://raw.githubusercontent.com/googlefonts/roboto-2/$COMMIT/src/hinted/Roboto-Regular.ttf"
+base="https://raw.githubusercontent.com/googlefonts/roboto-2/$COMMIT/src/hinted"
+url="$base/Roboto-Regular.ttf"
 
 # Retry deliberately. This is a network fetch in the middle of a build gate, and
 # it has taken CI down twice with `curl: (56) Connection died` -- a dropped
@@ -44,7 +45,16 @@ get() {
 
 echo "font: fetching Roboto-Regular.ttf"
 get "$url" "$dest/Roboto-Regular.ttf"
+
+# The rest of the family, for the composition tests that draw bold and italic as
+# their own faces rather than faking them. Same commit, so glyph ids and widths
+# are pinned the same way.
+for face in Bold Italic BoldItalic; do
+  echo "font: fetching Roboto-$face.ttf"
+  get "$base/Roboto-$face.ttf" "$dest/Roboto-$face.ttf"
+done
+
 get "https://raw.githubusercontent.com/googlefonts/roboto-2/$COMMIT/LICENSE" "$dest/Roboto-LICENSE.txt"
 
-echo "font: ready at $dest/Roboto-Regular.ttf"
+echo "font: ready at $dest/ (Regular, Bold, Italic, BoldItalic)"
 echo "  licence: $dest/Roboto-LICENSE.txt (Apache-2.0)"
