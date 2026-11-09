@@ -105,7 +105,7 @@ pub fn compose(
     // Every character the document will draw, so the subset holds exactly that
     // and nothing else. Whitespace is included deliberately: a font with no
     // space glyph still needs the code to advance, and `for_text` keeps it.
-    let characters: BTreeSet<char> = flow
+    let mut characters: BTreeSet<char> = flow
         .blocks
         .iter()
         .flat_map(|b| b.text().chars().collect::<Vec<_>>())
@@ -114,6 +114,10 @@ pub fn compose(
     if characters.is_empty() {
         return Err(ComposeError::Empty);
     }
+    // List markers are drawn but are not in any block's text, so the subset would
+    // not otherwise hold their glyphs. A bullet with no glyph in the font would
+    // be reported missing and the list would lose its markers silently.
+    characters.extend(marker_chars(flow));
 
     let mut doc = Document::new();
     let embedded = {
@@ -133,12 +137,14 @@ pub fn compose(
     let mut report = Report {
         pages: placed.pages,
         blocks: placed.blocks.len(),
+        // Lists are drawn with their markers now, so they are no longer
+        // approximated; tables (no rules yet) and figures (no image) still are.
         approximated: placed
             .blocks
             .iter()
             .filter(|b| {
                 flow.blocks.get(b.source).is_some_and(|s| {
-                    matches!(s, Block::Table(_) | Block::List(_) | Block::Figure { .. })
+                    matches!(s, Block::Table(_) | Block::Figure { .. })
                 })
             })
             .count(),
@@ -217,21 +223,52 @@ fn draw_page(
     canvas.fill_gray(0.0);
     for block in placed.blocks.iter().filter(|b| b.page == page) {
         for line in &block.lines {
-            let (codes, lost) = embedded.encode(&line.text);
-            dropped += lost;
-            if codes.is_empty() {
-                continue;
-            }
             // The layout engine measures downward from the top of the page and
             // PDF space runs upward, so the baseline is the page height less
             // the line's top and one em -- which is where a 1.2 leading puts
             // it.
             let baseline = height - (line.rect.y0 + line.style.size);
+
+            // A list item's marker, drawn in the gutter to the left of the text.
+            // It sits on the same baseline but at its own x, and is drawn even
+            // when the item's text is empty — the marker is the content then.
+            if let Some(marker) = &line.marker {
+                let (codes, lost) = embedded.encode(&marker.text);
+                dropped += lost;
+                if !codes.is_empty() {
+                    canvas.text_line(&font, line.style.size, marker.x, baseline, &codes);
+                }
+            }
+
+            let (codes, lost) = embedded.encode(&line.text);
+            dropped += lost;
+            if codes.is_empty() {
+                continue;
+            }
             canvas.text_line(&font, line.style.size, line.rect.x0, baseline, &codes);
             lines += 1;
         }
     }
     (canvas.finish().unwrap_or_default(), lines, dropped)
+}
+
+/// The characters list markers draw with, which no block's text contains.
+///
+/// `•` for any unordered list; the digits and `.` an ordered list numbers with.
+/// Gathered so the embedded subset holds them — see where it is extended.
+fn marker_chars(flow: &FlowDocument) -> BTreeSet<char> {
+    let mut out = BTreeSet::new();
+    for block in &flow.blocks {
+        if let Block::List(list) = block {
+            if list.ordered {
+                out.extend('0'..='9');
+                out.insert('.');
+            } else {
+                out.insert('•');
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -347,6 +384,55 @@ mod tests {
         let (_, report) = compose(&flow, &font, &Options::default()).unwrap();
         assert_eq!(report.missing, vec!['中', '文']);
         assert_eq!(report.dropped, 2, "and they are dropped, not substituted");
+    }
+
+    fn list(ordered: bool, items: &[&str]) -> Block {
+        use crate::flow::{Item, List};
+        Block::List(List {
+            ordered,
+            items: items
+                .iter()
+                .map(|t| Item {
+                    blocks: vec![Block::Paragraph {
+                        inlines: vec![Inline::text(*t)],
+                        source: None,
+                    }],
+                })
+                .collect(),
+            source: None,
+        })
+    }
+
+    #[test]
+    fn a_list_is_composed_with_its_markers_and_is_not_approximated() {
+        let Some(font) = roboto() else {
+            eprintln!("skipped: run ./corpus/fetch-font.sh");
+            return;
+        };
+        let flow = FlowDocument {
+            blocks: vec![
+                Block::Heading { level: 1, inlines: vec![Inline::text("Shopping")], source: None },
+                list(false, &["apples", "pears", "fresh bread"]),
+                list(true, &["wake", "work", "rest"]),
+            ],
+            ..FlowDocument::default()
+        };
+        let (doc, report) = compose(&flow, &font, &Options::default()).unwrap();
+
+        // A list is drawn with its markers now, not flattened to text and counted
+        // as an approximation.
+        assert_eq!(report.approximated, 0, "both lists are composed, not approximated");
+        // The marker glyphs are in the subset, so nothing is dropped.
+        assert_eq!(report.dropped, 0, "{:?}", report.missing);
+        assert!(report.missing.is_empty(), "{:?}", report.missing);
+
+        let saved = rasura_cos::save(&doc, &rasura_cos::SaveOptions::default()).unwrap();
+        let reopened = Document::open(saved.bytes).expect("what was composed reopens");
+        let tree = rasura_content::page::pages(&reopened).unwrap();
+        let text = rasura_layout::page_text(&reopened, &tree.pages[0]);
+        assert!(text.contains("apples") && text.contains("fresh bread"), "{text:?}");
+        // The ordered list's numbers were drawn onto the page, in sequence.
+        assert!(text.contains("1.") && text.contains("3."), "numbered markers drawn: {text:?}");
     }
 
     #[test]

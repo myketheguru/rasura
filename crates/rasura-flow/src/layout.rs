@@ -158,11 +158,28 @@ impl Measurer for rasura_font::create::Embedded {
     }
 }
 
+/// A list marker drawn in the margin to the left of a line.
+///
+/// The bullet or number of a list item, carried as its own thing rather than
+/// folded into the line text: it sits at a different x from the text (in the
+/// hanging-indent gutter) and must not be re-wrapped or measured with the item's
+/// words. Only the first line of an item has one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Marker {
+    /// What to draw: `•` for an unordered item, `1.` `2.` … for an ordered one.
+    pub text: String,
+    /// The device-space x of its left edge — the frame's left, inside the gutter
+    /// the item's text is indented past.
+    pub x: f64,
+}
+
 /// Where a line of text was put.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlacedLine {
     pub text: String,
-    /// The line's box: the frame's measure by the line height, positioned.
+    /// The line's box: the frame's measure by the line height, positioned. For
+    /// an indented line (a list item) `rect.x0` is where the *text* starts, past
+    /// the marker gutter — not the frame's left edge.
     pub rect: Rect,
     /// What it was set in.
     ///
@@ -172,6 +189,8 @@ pub struct PlacedLine {
     /// size at a baseline computed for a different one. The value is right here
     /// at placement time and costs three words to keep.
     pub style: TextStyle,
+    /// A list marker to draw left of this line, if it opens a list item.
+    pub marker: Option<Marker>,
 }
 
 /// Where a block was put.
@@ -431,19 +450,25 @@ pub fn layout(
         let line_height = measurer.line_height(style);
         let lines = break_lines(&block.text(), measure, style, measurer);
 
-        // Blocks that cannot be split occupy their whole height or move.
+        // Blocks that cannot be split occupy their whole height or move. A list
+        // lays its items out here, where the item boundaries still exist, so each
+        // gets a marker and a hanging indent; everything else atomic is its text.
         if !splittable(block) {
-            let height = if lines.is_empty() {
+            let specs: Vec<LineSpec> = match block {
+                Block::List(list) => list_specs(list, measure, style, measurer),
+                _ => lines.iter().cloned().map(LineSpec::plain).collect(),
+            };
+            let height = if specs.is_empty() {
                 opts.figure_height
             } else {
-                lines.len() as f64 * line_height
+                specs.len() as f64 * line_height
             };
             place_atomic(
                 &mut out,
                 &mut cursor,
                 &page_frames,
                 index,
-                &lines,
+                &specs,
                 height,
                 line_height,
                 style,
@@ -564,7 +589,7 @@ fn place_atomic(
     cursor: &mut Cursor,
     frames: &[Frame],
     source: usize,
-    lines: &[String],
+    specs: &[LineSpec],
     height: f64,
     line_height: f64,
     style: TextStyle,
@@ -590,7 +615,7 @@ fn place_atomic(
         page: cursor.page,
         frame: cursor.frame,
         rect: Rect::new(frame.x0, cursor.y, frame.x1, cursor.y + height),
-        lines: position(lines, frame, cursor.y, line_height, style),
+        lines: position_specs(specs, frame, cursor.y, line_height, style),
         continued: false,
     });
     report.blocks_placed += 1;
@@ -644,6 +669,71 @@ fn place_continuation(
     }
 }
 
+/// One line to place, before it is given an absolute position.
+///
+/// The marker and indent are what a list adds over plain prose: a hanging indent
+/// so wrapped lines align under the item's first word, and a marker on the first
+/// line of each item. For a paragraph both are empty and a `LineSpec` is just a
+/// string.
+#[derive(Debug, Clone)]
+struct LineSpec {
+    text: String,
+    /// The marker text for the first line of a list item, else `None`.
+    marker: Option<String>,
+    /// How far the text is indented from the frame's left, for the marker gutter.
+    indent: f64,
+}
+
+impl LineSpec {
+    fn plain(text: String) -> LineSpec {
+        LineSpec { text, marker: None, indent: 0.0 }
+    }
+}
+
+/// Lay a list's items out as their own lines, each item with a hanging indent
+/// and a marker on its first line.
+///
+/// Done here rather than in the emitter because the item boundaries only exist
+/// here: by the time anything downstream sees the block it is a flat run of
+/// lines, and `break_lines` over the whole list's text would have run the items
+/// together. The indent is the width of the widest marker the list uses, so
+/// every item's text starts at the same x whether it is numbered `9.` or `10.`.
+fn list_specs(
+    list: &crate::flow::List,
+    measure: f64,
+    style: TextStyle,
+    measurer: &impl Measurer,
+) -> Vec<LineSpec> {
+    let markers: Vec<String> = (0..list.items.len())
+        .map(|i| if list.ordered { format!("{}.", i + 1) } else { "•".to_string() })
+        .collect();
+    // A fixed gutter wide enough for the widest marker and a gap after it.
+    let gutter = markers
+        .iter()
+        .map(|m| measurer.width(m, style))
+        .fold(0.0_f64, f64::max);
+    let indent = gutter + measurer.width("  ", style);
+    let item_measure = (measure - indent).max(1.0);
+
+    let mut specs = Vec::new();
+    for (item, marker) in list.items.iter().zip(markers) {
+        let lines = break_lines(&item.text(), item_measure, style, measurer);
+        if lines.is_empty() {
+            // An empty item is still an item: its marker needs a line to sit on.
+            specs.push(LineSpec { text: String::new(), marker: Some(marker), indent });
+            continue;
+        }
+        for (j, line) in lines.into_iter().enumerate() {
+            specs.push(LineSpec {
+                text: line,
+                marker: (j == 0).then(|| marker.clone()),
+                indent,
+            });
+        }
+    }
+    specs
+}
+
 fn position(
     lines: &[String],
     frame: Rect,
@@ -651,14 +741,26 @@ fn position(
     line_height: f64,
     style: TextStyle,
 ) -> Vec<PlacedLine> {
-    lines
+    let specs: Vec<LineSpec> = lines.iter().map(|t| LineSpec::plain(t.clone())).collect();
+    position_specs(&specs, frame, top, line_height, style)
+}
+
+fn position_specs(
+    specs: &[LineSpec],
+    frame: Rect,
+    top: f64,
+    line_height: f64,
+    style: TextStyle,
+) -> Vec<PlacedLine> {
+    specs
         .iter()
         .enumerate()
-        .map(|(i, text)| PlacedLine {
-            text: text.clone(),
+        .map(|(i, spec)| PlacedLine {
+            text: spec.text.clone(),
             style,
+            marker: spec.marker.as_ref().map(|m| Marker { text: m.clone(), x: frame.x0 }),
             rect: Rect::new(
-                frame.x0,
+                frame.x0 + spec.indent,
                 top + i as f64 * line_height,
                 frame.x1,
                 top + (i + 1) as f64 * line_height,
@@ -1051,6 +1153,54 @@ mod tests {
 
         assert!(report.overfull > 0, "it is overfull and says so");
         assert!(!placed.blocks.is_empty(), "and the content is still placed");
+    }
+
+    fn list(ordered: bool, items: &[&str]) -> Block {
+        use crate::flow::{Item, List};
+        Block::List(List {
+            ordered,
+            items: items.iter().map(|t| Item { blocks: vec![para(t)] }).collect(),
+            source: None,
+        })
+    }
+
+    #[test]
+    fn a_list_gives_every_item_a_marker_and_a_hanging_indent() {
+        let long = "a second item long enough to wrap across more than one line at this \
+                    measure, so that the hanging indent of its continuation can be checked";
+        let flow = doc(vec![list(false, &["first", long, "third"])]);
+        let (placed, _) = layout(&flow, &one_column(), &Options::default(), &Standard14);
+        let block = &placed.blocks[0];
+
+        // One marker per item, each the bullet.
+        let markers: Vec<&Marker> = block.lines.iter().filter_map(|l| l.marker.as_ref()).collect();
+        assert_eq!(markers.len(), 3, "one marker per item, got {markers:?}");
+        assert!(markers.iter().all(|m| m.text == "•"), "{markers:?}");
+
+        // The marker sits in the gutter, left of the text it introduces.
+        let opened = block.lines.iter().find(|l| l.marker.is_some()).unwrap();
+        let gutter_x = opened.marker.as_ref().unwrap().x;
+        assert!(gutter_x < opened.rect.x0, "marker {gutter_x} should be left of text {}", opened.rect.x0);
+
+        // The long item wrapped, and its continuation aligns under the text —
+        // not back at the marker. That is what "hanging indent" means.
+        let text_x = opened.rect.x0;
+        assert!(
+            block.lines.iter().any(|l| l.marker.is_none() && (l.rect.x0 - text_x).abs() < 0.01),
+            "a wrapped continuation line should share the item's text indent"
+        );
+    }
+
+    #[test]
+    fn an_ordered_list_numbers_its_items_in_sequence() {
+        let flow = doc(vec![list(true, &["alpha", "beta", "gamma"])]);
+        let (placed, _) = layout(&flow, &one_column(), &Options::default(), &Standard14);
+        let numbers: Vec<String> = placed.blocks[0]
+            .lines
+            .iter()
+            .filter_map(|l| l.marker.as_ref().map(|m| m.text.clone()))
+            .collect();
+        assert_eq!(numbers, vec!["1.", "2.", "3."]);
     }
 
     #[test]
